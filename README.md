@@ -2,50 +2,110 @@
 
 Agentic workflow assistant for managing letters, emails, approvals, and Google Workspace automation for clubs/organizations.
 
----
+# Setup
+Make sure the below tools installed:
+```
+python
+postgres
+uv
+ollama
+```
+
+## 1. Clone repository
+
+```bash
+git clone https://github.com/sceptix-club/Hisho.git
+cd Hisho
+```
+
+
+## 2. Create environment file
+
+```bash
+cp .env.example .env
+```
+
+Update `.env`:
+```env
+LETTER_MODEL="ollama_chat/qwen3:4b"
+OLLAMA_BASE_URL="http://localhost:11434"
+DATABASE_URL="postgresql://user:password@localhost:5432/hisho"
+```
+
+
+## 3. Install dependencies
+
+```bash
+uv sync
+```
+
+
+
+# Apply Database Migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+
+# Run Agents
+
+## Web UI
+
+```bash
+uv run adk web
+```
+
+
+## Console
+
+```bash
+uv run adk run hisho_agents/
+```
+
+
+# Run FastAPI Server
+
+```bash
+uv run python main.py
+```
 
 # Project Structure
 
 ```text
-hisho/
-├── __init__.py
-├── agent.py                   # Main orchestrator (state machine)
-├── config.py                  # Model config, keys, limits
-├── main.py                    # FastAPI app
-├── api/
-│   ├── routes/
-│   │   ├── letters.py
-│   │   ├── forms.py
-│   │   └── reports.py
-├── sub_agents/
-│   ├── __init__.py
-│   ├── drafting/
-│   │   ├── content_writer.py
-│   │   ├── letter_writer.py
-│   │   ├── email_writer.py
-│   │   └── form_generator.py
-│   ├── workflow/
-│   │   ├── approval_router.py
-│   │   └── status_tracker.py
-│   └── agent_schemas.py
-├── tools/                     # these tools are globally shared by multiple agents
-│   ├── __init__.py
-│   ├── google_docs.py
-│   ├── gmail.py
-│   ├── drive.py
-│   ├── sheets.py
-│   ├── db.py
-│   └── forms.py
-├── datastore/
-│   ├── __init__.py
-│   └── vector_store.py
-├── prompts/                   # Write system prompts for these agents in one place
-│   ├── letter_prompts.py
-│   ├── email_prompts.py
-│   └── form_prompts.py
-└── utils/
-    ├── logger.py
-    └── helpers.py
+Hisho/
+├── README.md
+├── alembic.ini
+├── api                             # FastAPI endpoints
+│   └── routes
+│       └── letters.py
+├── config.py                       # Environment Config
+├── db                              # postgres database
+│   ├── migrations
+│   ├── models.py
+│   └── session.py
+├── hisho_agents
+│   ├── agent.py                    # Root agent
+│   ├── prompts
+│   │   ├── content_writer.py
+│   │   └── letter_agent.py
+│   ├── sub_agents                  # Sub agents for letter, report etc
+│   │   ├── agent_schemas.py
+│   │   ├── drafting
+│   │   │   ├── content_writer.py
+│   │   │   └── email_writer.py
+│   │   └── workflow
+│   │       └── approval_router.py
+│   └── tools                       # Tools for agents
+│       ├── db.py
+│       ├── docs.py
+│       ├── drive.py
+│       ├── letter_tools.py
+│       └── validation_checkers.py
+├── main.py                         # FastAPI server
+├── pyproject.toml
+├── utils
+└── uv.lock
 ```
 
 # Plan
