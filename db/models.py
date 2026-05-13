@@ -1,0 +1,90 @@
+from sqlalchemy.orm import DeclarativeBase
+from datetime import datetime
+from sqlalchemy import (
+    String,
+    Text,
+    Boolean,
+    Integer,
+    ForeignKey,
+    JSON,
+    DateTime,
+)
+from sqlalchemy.orm import (
+    Mapped,
+    mapped_column,
+    relationship,
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class LetterType(Base):
+    __tablename__ = "letter_type"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    approval_chain: Mapped[dict] = mapped_column(JSON, nullable=False)
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    letters = relationship("Letter", back_populates="letter_type")
+
+
+class Letter(Base):
+    __tablename__ = "letters"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    reference_number: Mapped[str] = mapped_column(String, nullable=False)
+    letter_type_id: Mapped[str] = mapped_column(
+        ForeignKey("letter_type.id"), nullable=False
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    letter_type = relationship(
+        "LetterType",
+        back_populates="letters",
+    )
+
+
+class Official(Base):
+    __tablename__ = "officials"
+    id: Mapped[str] = mapped_column(
+        String,
+        primary_key=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    address: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    organization: Mapped[str] = mapped_column(Text, nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    reference_number: Mapped[str] = mapped_column(String, nullable=False)
+    report_type: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
