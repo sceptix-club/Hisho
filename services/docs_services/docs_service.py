@@ -8,3 +8,26 @@ class GoogleDocsService:
 
     def fetch_document(self, document_id: str) -> dict:
         return self._client.service.documents().get(documentId=document_id).execute()
+
+    def create_document(self, title: str, content: str) -> dict:
+        file = self._client.drive_service.files().create(
+            body={"name": title, "mimeType": "application/vnd.google-apps.document"}
+        ).execute()
+
+        document_id = file.get("id")
+
+        self._client.service.documents().batchUpdate(
+            documentId=document_id,
+            body={
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": 1},
+                            "text": content
+                        }
+                    }
+                ]
+            }
+        ).execute()
+
+        return {"document_id": document_id, "title": title}

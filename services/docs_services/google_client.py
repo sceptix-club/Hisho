@@ -14,3 +14,4 @@ class GoogleUserClient:
             client_secret=settings.client_secret,
         )
         self.service = build("docs", "v1", credentials=creds)
+        self.drive_service = build("drive", "v3", credentials=creds)
