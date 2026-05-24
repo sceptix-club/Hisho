@@ -4,7 +4,7 @@ from google.adk.tools import FunctionTool
 from hisho_agents.tools.letter_tools import analyze_letters, save_letter_to_file
 from hisho_agents.prompts.test_docs_prompt import LETTER_AGENT_INSTRUCTION
 from hisho_agents.sub_agents.drafting.content_writer import robust_content_writer
-from hisho_agents.tools.docs import get_google_document, create_google_document
+from hisho_agents.tools.docs import get_google_document, create_google_document, edit_google_document
 
 
 interactive_letter_agent = Agent(
@@ -18,6 +18,7 @@ interactive_letter_agent = Agent(
         FunctionTool(analyze_letters),
         FunctionTool(get_google_document),
         FunctionTool(create_google_document),
+        FunctionTool(edit_google_document),
     ],
     output_key="final_status",
 )

@@ -31,3 +31,44 @@ class GoogleDocsService:
         ).execute()
 
         return {"document_id": document_id, "title": title}
+
+    def edit_document(self, document_id: str, requests: list[dict]) -> dict:
+        """
+        Edits an existing Google Document by applying a list of update requests
+        via the batchUpdate API.
+
+        Args:
+            document_id: The ID of the document to edit.
+            requests: A list of request dicts following the Google Docs API
+                      batchUpdate format. Supported request types include:
+
+                      - insertText: Insert text at a specific index.
+                        {"insertText": {"location": {"index": 1}, "text": "Hello"}}
+
+                      - replaceAllText: Replace all occurrences of a string.
+                        {"replaceAllText": {"containsText": {"text": "old", "matchCase": True}, "replaceText": "new"}}
+
+                      - deleteContentRange: Delete content between two indices.
+                        {"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 20}}}
+
+                      - insertTable: Insert a table at a given index.
+                        {"insertTable": {"rows": 3, "columns": 3, "location": {"index": 1}}}
+
+        Returns:
+            A dictionary with the batchUpdate response on success,
+            or an error dictionary on failure.
+        """
+        if not requests:
+            return {"error": "No update requests provided."}
+
+        try:
+            response = self._client.service.documents().batchUpdate(
+                documentId=document_id,
+                body={"requests": requests},
+            ).execute()
+            return {
+                "document_id": document_id,
+                "replies": response.get("replies", []),
+            }
+        except Exception as e:
+            return {"error": f"Failed to edit document: {str(e)}"}
