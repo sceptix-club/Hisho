@@ -24,6 +24,7 @@ class LetterType(Base):
     __tablename__ = "letter_type"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     approval_chain: Mapped[dict] = mapped_column(JSON, nullable=False)
     template: Mapped[str] = mapped_column(Text, nullable=False)
     letters = relationship("Letter", back_populates="letter_type")
