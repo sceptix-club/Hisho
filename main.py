@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from api.routes.letters import router as letters_router
 from api.routes.officials import router as officials_router
+from api.routes.letter_types import router as letter_types_router
 import uvicorn
 
 app = FastAPI()
 app.include_router(letters_router)
 app.include_router(officials_router)
+app.include_router(letter_types_router)
 
 
 @app.get("/")
