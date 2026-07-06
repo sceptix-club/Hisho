@@ -99,3 +99,32 @@ class Report(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+class User(Base):
+    __tablename__ = "user"
+    id: Mapped[str] = mapped_column(
+        String,
+        primary_key=True,
+    )
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    hashed_password: Mapped[str | None] = mapped_column(String, nullable=True)
+    full_name: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    organization: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    google_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    google_access_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    google_refresh_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

@@ -11,10 +11,13 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 from config import settings
 from hisho_agents.agent import root_agent
+from api.routes.auth import router as auth_router
+from api.routes.auth import ensure_admin_user
 from api.routes.letter_types import router as letter_types_router
 from api.routes.letters import router as letters_router
 from api.routes.officials import router as officials_router
 from api.schemas.hisho import ChatRequest
+from db.session import AsyncSessionLocal
 import json
 
 
@@ -34,6 +37,8 @@ async def lifespan(app: FastAPI):
         session_service=app.state.db_session_service,
         auto_create_session=True,
     )
+    async with AsyncSessionLocal() as session:
+        await ensure_admin_user(session)
     logger.info("Runner and DatabaseSessionService initialized")
     yield
     await app.state.db_session_service.close()
@@ -44,12 +49,13 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(letters_router)
 app.include_router(officials_router)
 app.include_router(letter_types_router)

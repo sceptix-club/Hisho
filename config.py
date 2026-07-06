@@ -7,12 +7,16 @@ class Settings(BaseSettings):
     letter_model: str = Field(alias="LETTER_MODEL")
     ollama_base_url: str = Field(
         default="http://localhost:11434", alias="OLLAMA_BASE_URL"
-    )   
+    )
     database_url: str = Field(alias="DATABASE_URL")
     client_id: str = Field(alias="CLIENT_ID")
     client_secret: str = Field(alias="CLIENT_SECRET")
     test_access_token: str | None = Field(default=None, alias="TEST_ACCESS_TOKEN")
     test_refresh_token: str | None = Field(default=None, alias="TEST_REFRESH_TOKEN")
+    jwt_auth_secret: str | None = Field(default=None, alias="JWT_AUTH_SECRET")
+    admin_email: str = Field(alias="ADMIN_EMAIL")
+    frontend_url: str = Field(alias="FRONTEND_URL")
+    google_redirect_uri: str = Field(alias="GOOGLE_REDIRECT_URI")
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
