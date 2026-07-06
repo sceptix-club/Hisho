@@ -1,20 +1,44 @@
-<script lang="ts" module>
+<script lang="ts">
 	import BookOpenIcon from '@lucide/svelte/icons/book-open';
 	import BotIcon from '@lucide/svelte/icons/bot';
-	import ChartPieIcon from '@lucide/svelte/icons/chart-pie';
-	import FrameIcon from '@lucide/svelte/icons/frame';
 	import LifeBuoyIcon from '@lucide/svelte/icons/life-buoy';
-	import MapIcon from '@lucide/svelte/icons/map';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import Database from '@lucide/svelte/icons/database';
+	import NavMain from './nav-main.svelte';
+	import NavProjects from './nav-projects.svelte';
+	import NavSecondary from './nav-secondary.svelte';
+	import NavUser from './nav-user.svelte';
+	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
+	import Skeleton from '$lib/components/ui/skeleton/skeleton.svelte';
+
+	import type { ComponentProps } from 'svelte';
+	import { FileText, Mail, MessageSquare, Presentation } from '@lucide/svelte';
+	import type { User } from '$lib/types/user';
+
+	let user = $state<User | null>(null);
+	let loading = $state(true);
+
+	$effect(() => {
+		const token = localStorage.getItem('access_token');
+		if (!token) {
+			user = null;
+			loading = false;
+			return;
+		}
+		fetch('/auth/me', {
+			headers: { Authorization: `Bearer ${token}` }
+		})
+			.then((res) => {
+				if (!res.ok) throw new Error('Not Authenticated');
+				return res.json();
+			})
+			.then((data) => (user = data))
+			.catch(() => (user = null))
+			.finally(() => (loading = false));
+	});
 
 	const data = {
-		user: {
-			name: 'admin',
-			email: 'admin@sceptix.in',
-			avatar: 'https://media1.tenor.com/m/SCC5QYP9xlgAAAAC/goal.gif'
-		},
 		navMain: [
 			{
 				title: 'Chat',
@@ -22,14 +46,8 @@
 				icon: MessageSquare,
 				isActive: true,
 				items: [
-					{
-						title: 'History',
-						url: '/history'
-					},
-					{
-						title: 'Starred',
-						url: '/starred'
-					}
+					{ title: 'History', url: '/history' },
+					{ title: 'Starred', url: '/starred' }
 				]
 			},
 			{
@@ -37,14 +55,8 @@
 				url: '#',
 				icon: BotIcon,
 				items: [
-					{
-						title: 'Letter Writer',
-						url: '#'
-					},
-					{
-						title: 'Email Writer',
-						url: '#'
-					}
+					{ title: 'Letter Writer', url: '#' },
+					{ title: 'Email Writer', url: '#' }
 				]
 			},
 			{
@@ -52,14 +64,8 @@
 				url: '#',
 				icon: Database,
 				items: [
-					{
-						title: 'Officials',
-						url: '#'
-					},
-					{
-						title: 'Letters',
-						url: '#'
-					}
+					{ title: 'Officials', url: '#' },
+					{ title: 'Letters', url: '#' }
 				]
 			},
 			{
@@ -67,22 +73,10 @@
 				url: '#',
 				icon: BookOpenIcon,
 				items: [
-					{
-						title: 'Introduction',
-						url: '#'
-					},
-					{
-						title: 'Get Started',
-						url: '#'
-					},
-					{
-						title: 'Tutorials',
-						url: '#'
-					},
-					{
-						title: 'Changelog',
-						url: '#'
-					}
+					{ title: 'Introduction', url: '#' },
+					{ title: 'Get Started', url: '#' },
+					{ title: 'Tutorials', url: '#' },
+					{ title: 'Changelog', url: '#' }
 				]
 			},
 			{
@@ -90,66 +84,23 @@
 				url: '#',
 				icon: Settings2Icon,
 				items: [
-					{
-						title: 'General',
-						url: '#'
-					},
-					{
-						title: 'Team',
-						url: '#'
-					},
-					{
-						title: 'Billing',
-						url: '#'
-					},
-					{
-						title: 'Limits',
-						url: '#'
-					}
+					{ title: 'General', url: '#' },
+					{ title: 'Team', url: '#' },
+					{ title: 'Billing', url: '#' },
+					{ title: 'Limits', url: '#' }
 				]
 			}
 		],
 		navSecondary: [
-			{
-				title: 'Support',
-				url: '#',
-				icon: LifeBuoyIcon
-			},
-			{
-				title: 'Feedback',
-				url: '#',
-				icon: SendIcon
-			}
+			{ title: 'Support', url: '#', icon: LifeBuoyIcon },
+			{ title: 'Feedback', url: '#', icon: SendIcon }
 		],
 		projects: [
-			{
-				name: 'Design Engineering',
-				url: '#',
-				icon: FrameIcon
-			},
-			{
-				name: 'Sales & Marketing',
-				url: '#',
-				icon: ChartPieIcon
-			},
-			{
-				name: 'Travel',
-				url: '#',
-				icon: MapIcon
-			}
+			{ name: 'Workshops', url: '#', icon: Presentation },
+			{ name: 'Letters', url: '#', icon: Mail },
+			{ name: 'Reports', url: '#', icon: FileText }
 		]
 	};
-</script>
-
-<script lang="ts">
-	import NavMain from './nav-main.svelte';
-	import NavProjects from './nav-projects.svelte';
-	import NavSecondary from './nav-secondary.svelte';
-	import NavUser from './nav-user.svelte';
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-
-	import type { ComponentProps } from 'svelte';
-	import { MessageCircle, MessageSquare } from '@lucide/svelte';
 
 	let { ref = $bindable(null), ...restProps }: ComponentProps<typeof Sidebar.Root> = $props();
 </script>
@@ -180,6 +131,16 @@
 		<NavSecondary items={data.navSecondary} class="mt-auto" />
 	</Sidebar.Content>
 	<Sidebar.Footer>
-		<NavUser user={data.user} />
+		{#if user}
+			<NavUser {user} />
+		{:else}
+			<div class="flex items-center gap-2 p-2">
+				<Skeleton class="size-8 rounded-lg" />
+				<div class="grid flex-1 gap-1">
+					<Skeleton class="h-3 w-24" />
+					<Skeleton class="h-3 w-32" />
+				</div>
+			</div>
+		{/if}
 	</Sidebar.Footer>
 </Sidebar.Root>
