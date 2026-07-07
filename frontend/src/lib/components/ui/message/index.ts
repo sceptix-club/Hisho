@@ -1,6 +1,3 @@
-import Message from "./message.svelte";
+import Message from './message.svelte';
 
-export {
-  Message,
-  Message as Root,
-};
+export { Message, Message as Root };
