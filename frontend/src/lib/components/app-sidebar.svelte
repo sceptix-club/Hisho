@@ -131,9 +131,7 @@
 		<NavSecondary items={data.navSecondary} class="mt-auto" />
 	</Sidebar.Content>
 	<Sidebar.Footer>
-		{#if user}
-			<NavUser {user} />
-		{:else}
+		{#if loading}
 			<div class="flex items-center gap-2 p-2">
 				<Skeleton class="size-8 rounded-lg" />
 				<div class="grid flex-1 gap-1">
@@ -141,6 +139,10 @@
 					<Skeleton class="h-3 w-32" />
 				</div>
 			</div>
+		{:else if user}
+			<NavUser {user} />
+		{:else}
+			<a href="/login" class="text-muted-foreground hover:text-foreground p-2 text-sm">Sign in</a>
 		{/if}
 	</Sidebar.Footer>
 </Sidebar.Root>

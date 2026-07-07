@@ -36,6 +36,10 @@ export default defineConfig(
 	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
-		rules: {}
+		rules: {
+			// ponytail: no base path configured and UI components take dynamic hrefs;
+			// re-enable if a base path is ever added
+			'svelte/no-navigation-without-resolve': 'off'
+		}
 	}
 );

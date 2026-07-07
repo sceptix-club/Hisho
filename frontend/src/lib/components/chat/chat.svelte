@@ -80,7 +80,9 @@
 						} else if (data.type === 'done') {
 							reply.status = 'complete';
 						}
-					} catch {}
+					} catch {
+						// ignore malformed SSE chunk
+					}
 				}
 			}
 		}
@@ -90,7 +92,7 @@
 <div transition:fly class="flex h-full flex-col">
 	<div class="flex-1 min-h-0 overflow-y-auto p-4">
 		<div class="flex flex-col gap-3">
-			{#each messages as msg, i}
+			{#each messages as msg, i (i)}
 				<div transition:fly={{ y: 10, duration: 250 }}>
 					<Message align={msg.role === 'user' ? 'end' : 'start'}>
 						<div
@@ -128,7 +130,7 @@
 										>
 									</label>
 								{/if}
-								{#each msg.tool_calls as tc}
+								{#each msg.tool_calls as tc, ti (ti)}
 									<div class="text-sm text-blue-500 font-mono">🔧 {tc.name}</div>
 								{/each}
 								<Bubble variant="received">
