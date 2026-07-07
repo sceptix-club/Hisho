@@ -1,5 +1,12 @@
+import asyncio
+import logging
+
 from services.docs_services.docs_service import GoogleDocsService
+from hisho_agents.tools.db import remember_letter
 from config import settings
+
+logger = logging.getLogger(__name__)
+
 
 def get_google_document(document_id: str) -> dict:
     """
@@ -12,38 +19,44 @@ def get_google_document(document_id: str) -> dict:
     Returns:
         A dictionary containing the document data.
     """
-    access_token = settings.test_access_token
+    access_token = settings.google_access_token
     if not access_token:
         return {"error": "Failure: No access token found"}
         
-    refresh_token = settings.test_refresh_token
+    refresh_token = settings.google_refresh_token
     if not refresh_token:
         return {"error": "Failure: No refresh token found"}
     
     docs_service = GoogleDocsService(settings, access_token, refresh_token)
     return docs_service.fetch_document(document_id)
 
-def create_google_document(title: str, content: str) -> dict:
+async def create_google_document(title: str, content: str) -> dict:
     """
     Creates a new Google Document with the specified title and content using GoogleDocsService.
-    
+
     Args:
         title: The title of the new document.
         content: The initial content to insert into the document.
-        
+
     Returns:
         A dictionary containing the document data (e.g., document_id and title).
     """
-    access_token = settings.test_access_token
+    access_token = settings.google_access_token
     if not access_token:
         return {"error": "Failure: No access token found"}
-        
-    refresh_token = settings.test_refresh_token
+
+    refresh_token = settings.google_refresh_token
     if not refresh_token:
         return {"error": "Failure: No refresh token found"}
-    
+
     docs_service = GoogleDocsService(settings, access_token, refresh_token)
-    return docs_service.create_document(title, content)
+    doc = await asyncio.to_thread(docs_service.create_document, title, content)
+    try:
+        await remember_letter(title, content, source_doc_id=doc.get("document_id"))
+    except Exception as e:
+        # memory write is best-effort; never fail the letter over it
+        logger.warning("Could not store letter in memory: %s", e)
+    return doc
 
 def edit_google_document(document_id: str, requests: list[dict]) -> dict:
     """
@@ -72,11 +85,11 @@ def edit_google_document(document_id: str, requests: list[dict]) -> dict:
         A dictionary with the document_id and batchUpdate replies on success,
         or an error dictionary on failure.
     """
-    access_token = settings.test_access_token
+    access_token = settings.google_access_token
     if not access_token:
         return {"error": "Failure: No access token found"}
 
-    refresh_token = settings.test_refresh_token
+    refresh_token = settings.google_refresh_token
     if not refresh_token:
         return {"error": "Failure: No refresh token found"}
 

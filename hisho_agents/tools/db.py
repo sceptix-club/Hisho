@@ -1,7 +1,71 @@
+import uuid
+
 from sqlalchemy import select
 
 from db.session import AsyncSessionLocal
-from db.models import LetterType, Official
+from db.models import LetterMemory, LetterType, Official
+from services.embeddings import embed_text
+
+
+async def find_similar_letters(query: str) -> str:
+    """Find past letters most similar to the request, to imitate their style.
+
+    Call this BEFORE drafting any letter. Use the returned letters as
+    references for tone, structure and formatting - do not copy their
+    content verbatim.
+
+    Args:
+        query: A short description of the letter to write (topic, letter
+            type, recipient), e.g. "permission letter to the principal for
+            a robotics workshop".
+
+    Returns:
+        Up to 3 past letters (title + body) formatted as example blocks.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            vec = await embed_text(query)
+            stmt = (
+                select(LetterMemory)
+                .order_by(LetterMemory.embedding.cosine_distance(vec))
+                .limit(3)
+            )
+        except Exception:
+            # ponytail: Ollama embed down -> fall back to most recent letters
+            # so drafting never blocks
+            stmt = (
+                select(LetterMemory)
+                .order_by(LetterMemory.created_at.desc())
+                .limit(3)
+            )
+        result = await session.execute(stmt)
+        letters = result.scalars().all()
+
+    if not letters:
+        return (
+            "No past letters in memory yet. "
+            "Draft from the letter type template instead."
+        )
+    return "\n\n".join(
+        f"--- EXAMPLE LETTER: {lm.title} ---\n{lm.content[:2000]}" for lm in letters
+    )
+
+
+async def remember_letter(
+    title: str, content: str, source_doc_id: str | None = None
+) -> None:
+    """Store a finalized letter in vector memory so future drafts learn from it."""
+    async with AsyncSessionLocal() as session:
+        session.add(
+            LetterMemory(
+                id=uuid.uuid4().hex,
+                source_doc_id=source_doc_id,
+                title=title,
+                content=content,
+                embedding=await embed_text(f"{title}\n\n{content}"),
+            )
+        )
+        await session.commit()
 
 
 async def list_letter_types() -> str:

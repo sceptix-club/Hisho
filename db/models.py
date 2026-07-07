@@ -1,5 +1,6 @@
 from sqlalchemy.orm import DeclarativeBase
 from datetime import datetime
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     String,
     Text,
@@ -52,6 +53,22 @@ class Letter(Base):
     letter_type = relationship(
         "LetterType",
         back_populates="letters",
+    )
+
+
+class LetterMemory(Base):
+    """Past letters used as style/format examples for RAG retrieval."""
+
+    __tablename__ = "letter_memory"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_doc_id: Mapped[str | None] = mapped_column(
+        String, unique=True, nullable=True
+    )
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
 
 
