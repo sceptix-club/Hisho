@@ -1,13 +1,14 @@
 """Ingest letters from the tabs of a single Google Doc into pgvector memory.
 
 Usage:
-    uv run python -m scripts.ingest_letters [DOCUMENT_ID]
+    uv run python -m scripts.ingest_letters [DOCUMENT_ID] [--force]
 
 DOCUMENT_ID falls back to LETTERS_DOC_ID in .env. Each tab in the document is
 stored as one letter (tab title = letter title). Requires GOOGLE_ACCESS_TOKEN /
 GOOGLE_REFRESH_TOKEN and a running Ollama with the embedding model pulled
 (`ollama pull nomic-embed-text`). Safe to re-run: already-ingested tabs are
-skipped by doc_id#tab_id.
+skipped by doc_id#tab_id. Pass --force to re-extract and re-embed existing
+tabs in place (e.g. after an extractor change).
 """
 
 import asyncio
@@ -31,7 +32,9 @@ def _flatten_tabs(tabs: list[dict]) -> Iterator[dict]:
 
 
 async def main() -> None:
-    doc_id = sys.argv[1] if len(sys.argv) > 1 else settings.letters_doc_id
+    force = "--force" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--force"]
+    doc_id = args[0] if args else settings.letters_doc_id
     if not doc_id:
         sys.exit("Pass a Google Doc ID or set LETTERS_DOC_ID in .env")
     if not (settings.google_access_token and settings.google_refresh_token):
@@ -45,14 +48,15 @@ async def main() -> None:
     print(f"Found {len(tabs)} tabs in '{doc.get('title', doc_id)}'")
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(LetterMemory.source_doc_id))
-        known = {source_id for (source_id,) in result if source_id}
+        result = await session.execute(select(LetterMemory))
+        existing = {lm.source_doc_id: lm for lm in result.scalars()}
 
-        added = skipped = 0
+        added = updated = skipped = 0
         for tab in tabs:
             props = tab.get("tabProperties", {})
             source_id = f"{doc_id}#{props.get('tabId')}"
-            if source_id in known:
+            row = existing.get(source_id)
+            if row and not force:
                 skipped += 1
                 continue
             text = GoogleDocsService.extract_text(tab.get("documentTab", {}))
@@ -60,20 +64,26 @@ async def main() -> None:
                 skipped += 1
                 continue
             title = props.get("title") or "Untitled letter"
-            session.add(
-                LetterMemory(
-                    id=uuid.uuid4().hex,
-                    source_doc_id=source_id,
-                    title=title,
-                    content=text,
-                    embedding=await embed_text(f"{title}\n\n{text}"),
+            embedding = await embed_text(f"{title}\n\n{text}")
+            if row:
+                row.title, row.content, row.embedding = title, text, embedding
+                updated += 1
+                print(f"  ~ {title}")
+            else:
+                session.add(
+                    LetterMemory(
+                        id=uuid.uuid4().hex,
+                        source_doc_id=source_id,
+                        title=title,
+                        content=text,
+                        embedding=embedding,
+                    )
                 )
-            )
-            added += 1
-            print(f"  + {title}")
+                added += 1
+                print(f"  + {title}")
         await session.commit()
 
-    print(f"Done: {added} added, {skipped} skipped")
+    print(f"Done: {added} added, {updated} updated, {skipped} skipped")
 
 
 if __name__ == "__main__":

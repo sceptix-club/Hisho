@@ -15,12 +15,38 @@ class GoogleDocsService:
 
     @staticmethod
     def extract_text(doc: dict) -> str:
-        """Flatten a Docs API document body into plain text."""
+        """Flatten a Docs API document body into plain text.
+
+        Tables are rendered as 'cell | cell' lines - a shape the drafting
+        model can reproduce through the plain-text insertText output path.
+        """
+        return GoogleDocsService._extract_content(
+            doc.get("body", {}).get("content", [])
+        ).strip()
+
+    @staticmethod
+    def _extract_content(content: list) -> str:
         parts: list[str] = []
-        for item in doc.get("body", {}).get("content", []):
-            for el in item.get("paragraph", {}).get("elements", []):
-                parts.append(el.get("textRun", {}).get("content", ""))
-        return "".join(parts).strip()
+        for item in content:
+            if "paragraph" in item:
+                for el in item["paragraph"].get("elements", []):
+                    parts.append(el.get("textRun", {}).get("content", ""))
+            elif "table" in item:
+                for row in item["table"].get("tableRows", []):
+                    cells = [
+                        GoogleDocsService._extract_content(
+                            cell.get("content", [])
+                        ).strip()
+                        for cell in row.get("tableCells", [])
+                    ]
+                    parts.append(" | ".join(cells) + "\n")
+            elif "tableOfContents" in item:
+                parts.append(
+                    GoogleDocsService._extract_content(
+                        item["tableOfContents"].get("content", [])
+                    )
+                )
+        return "".join(parts)
 
 
     def create_document(self, title: str, content: str) -> dict:
