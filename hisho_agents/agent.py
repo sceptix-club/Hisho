@@ -3,7 +3,8 @@ from google.adk.tools.agent_tool import AgentTool
 from config import config
 from google.adk.tools import FunctionTool
 from hisho_agents.tools.letter_tools import analyze_letters, save_letter_to_file
-from hisho_agents.prompts.test_docs_prompt import LETTER_AGENT_INSTRUCTION
+from hisho_agents.tools.db import find_similar_letters
+from hisho_agents.prompts.letter_agent import LETTER_AGENT_INSTRUCTION
 from hisho_agents.prompts.email_agent import EMAIL_AGENT_INSTRUCTION
 from hisho_agents.prompts.root_prompt import ROOT_AGENT_INSTRUCTION
 from hisho_agents.sub_agents.drafting.content_writer import robust_content_writer
@@ -24,6 +25,7 @@ interactive_letter_agent = Agent(
     sub_agents=[robust_content_writer],
     tools=[
         AgentTool(approval_router_agent),
+        FunctionTool(find_similar_letters),
         FunctionTool(save_letter_to_file),
         FunctionTool(analyze_letters),
         FunctionTool(get_google_document),

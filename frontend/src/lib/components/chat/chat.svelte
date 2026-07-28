@@ -6,13 +6,40 @@
 	import { Bubble } from '$lib/components/ui/bubble/index.js';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { SendHorizontal } from '@lucide/svelte';
+	import { SendHorizontal, SquarePen } from '@lucide/svelte';
 	import { Skeleton } from '../ui/skeleton';
+	import { auth } from '$lib/stores/auth.svelte';
+	import { page } from '$app/state';
 
 	let input = $state('');
 	let messages = $state<ChatMessage[]>([]);
+	let sessionId = $state<string | null>(null);
 
 	let buf = '';
+	let loadedSession: string | null = null;
+
+	function newChat() {
+		messages = [];
+		sessionId = null;
+	}
+
+	$effect(() => {
+		const param = page.url.searchParams.get('session');
+		if (param && param !== loadedSession) {
+			loadedSession = param;
+			resumeSession(param);
+		}
+	});
+
+	async function resumeSession(id: string) {
+		await auth.load();
+		const uid = auth.user?.id ?? 'default';
+		const res = await fetch(`http://localhost:8000/sessions/${id}?user_id=${uid}`);
+		if (!res.ok) return;
+		const data = await res.json();
+		messages = data.messages;
+		sessionId = data.id;
+	}
 
 	async function send() {
 		if (!input) return;
@@ -39,7 +66,11 @@
 
 		const res = await fetch('http://localhost:8000/chat/stream', {
 			method: 'POST',
-			body: JSON.stringify({ query, user_id: 'default', session_id: null }),
+			body: JSON.stringify({
+				query,
+				user_id: auth.user?.id ?? 'default',
+				session_id: sessionId
+			}),
 			headers: { 'Content-Type': 'application/json' }
 		});
 		if (!res.ok || !res.body) {
@@ -78,9 +109,12 @@
 							if (tc) tc.result = data.result;
 							else reply.tool_calls.push({ name: data.name, result: data.result });
 						} else if (data.type === 'done') {
+							sessionId = data.session_id;
 							reply.status = 'complete';
 						}
-					} catch {}
+					} catch {
+						// ignore malformed SSE chunk
+					}
 				}
 			}
 		}
@@ -90,7 +124,7 @@
 <div transition:fly class="flex h-full flex-col">
 	<div class="flex-1 min-h-0 overflow-y-auto p-4">
 		<div class="flex flex-col gap-3">
-			{#each messages as msg, i}
+			{#each messages as msg, i (i)}
 				<div transition:fly={{ y: 10, duration: 250 }}>
 					<Message align={msg.role === 'user' ? 'end' : 'start'}>
 						<div
@@ -128,7 +162,7 @@
 										>
 									</label>
 								{/if}
-								{#each msg.tool_calls as tc}
+								{#each msg.tool_calls as tc, ti (ti)}
 									<div class="text-sm text-blue-500 font-mono">🔧 {tc.name}</div>
 								{/each}
 								<Bubble variant="received">
@@ -153,6 +187,15 @@
 	</div>
 	<div class="border-t p-10">
 		<form onsubmit={send} class="flex gap-2">
+			<Button
+				type="button"
+				variant="ghost"
+				onclick={newChat}
+				disabled={!messages.length}
+				title="New chat"
+			>
+				<SquarePen />
+			</Button>
 			<Input bind:value={input} placeholder="Type a message..." class="flex-1 border-none" />
 			<Button type="submit" disabled={!input}>
 				<SendHorizontal />

@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest a new feature for Hisho
+title: "feat: "
+labels: [enhancement]
+
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: Feature
+      description: Describe the feature you'd like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add any extra details, examples, or screenshots (optional).
