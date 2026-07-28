@@ -14,28 +14,10 @@
 
 	import type { ComponentProps } from 'svelte';
 	import { FileText, Mail, MessageSquare, Presentation } from '@lucide/svelte';
-	import type { User } from '$lib/types/user';
-
-	let user = $state<User | null>(null);
-	let loading = $state(true);
+	import { auth } from '$lib/stores/auth.svelte';
 
 	$effect(() => {
-		const token = localStorage.getItem('access_token');
-		if (!token) {
-			user = null;
-			loading = false;
-			return;
-		}
-		fetch('/auth/me', {
-			headers: { Authorization: `Bearer ${token}` }
-		})
-			.then((res) => {
-				if (!res.ok) throw new Error('Not Authenticated');
-				return res.json();
-			})
-			.then((data) => (user = data))
-			.catch(() => (user = null))
-			.finally(() => (loading = false));
+		auth.load();
 	});
 
 	const data = {
@@ -131,7 +113,7 @@
 		<NavSecondary items={data.navSecondary} class="mt-auto" />
 	</Sidebar.Content>
 	<Sidebar.Footer>
-		{#if loading}
+		{#if auth.loading}
 			<div class="flex items-center gap-2 p-2">
 				<Skeleton class="size-8 rounded-lg" />
 				<div class="grid flex-1 gap-1">
@@ -139,8 +121,8 @@
 					<Skeleton class="h-3 w-32" />
 				</div>
 			</div>
-		{:else if user}
-			<NavUser {user} />
+		{:else if auth.user}
+			<NavUser user={auth.user} />
 		{:else}
 			<a href="/login" class="text-muted-foreground hover:text-foreground p-2 text-sm">Sign in</a>
 		{/if}

@@ -167,5 +167,86 @@ async def chat_stream(req: ChatRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+def _events_to_messages(events) -> list[dict]:
+    """Map stored ADK session events to the frontend's ChatMessage shape."""
+    messages: list[dict] = []
+    for event in events:
+        if not event.content or not event.content.parts:
+            continue
+        text = "".join(
+            part.text
+            for part in event.content.parts
+            if part.text and not getattr(part, "thought", False)
+        )
+        if event.author == "user":
+            if text:
+                messages.append(
+                    {
+                        "role": "user",
+                        "text": text,
+                        "thought": "",
+                        "tool_calls": [],
+                        "status": "complete",
+                    }
+                )
+            continue
+        if not messages or messages[-1]["role"] == "user":
+            messages.append(
+                {
+                    "role": "assistant",
+                    "text": "",
+                    "thought": "",
+                    "tool_calls": [],
+                    "status": "complete",
+                }
+            )
+        reply = messages[-1]
+        for call in event.get_function_calls():
+            reply["tool_calls"].append({"name": call.name})
+        if text:
+            try:
+                text = json.loads(text).get("final_status", text)
+            except (ValueError, AttributeError):
+                pass
+            reply["text"] = text
+    return messages
+
+
+@app.get("/sessions")
+async def list_chat_sessions(user_id: str = "default"):
+    svc = app.state.db_session_service
+    resp = await svc.list_sessions(app_name="hisho", user_id=user_id)
+    sessions = sorted(resp.sessions, key=lambda s: s.last_update_time, reverse=True)
+    out = []
+    for s in sessions[:20]:
+        full = await svc.get_session(
+            app_name="hisho", user_id=user_id, session_id=s.id
+        )
+        title = "New chat"
+        for event in full.events if full else []:
+            if event.author == "user" and event.content and event.content.parts:
+                first_text = next(
+                    (p.text for p in event.content.parts if p.text), None
+                )
+                if first_text:
+                    title = first_text[:40]
+                    break
+        out.append(
+            {"id": s.id, "title": title, "last_update": s.last_update_time}
+        )
+    return out
+
+
+@app.get("/sessions/{session_id}")
+async def get_chat_session(session_id: str, user_id: str = "default"):
+    svc = app.state.db_session_service
+    session = await svc.get_session(
+        app_name="hisho", user_id=user_id, session_id=session_id
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"id": session.id, "messages": _events_to_messages(session.events)}
+
+
 if __name__ == "__main__":
     uvicorn.run("main:app", reload=True)

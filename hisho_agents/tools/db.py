@@ -31,8 +31,7 @@ async def find_similar_letters(query: str) -> str:
                 .limit(3)
             )
         except Exception:
-            # ponytail: Ollama embed down -> fall back to most recent letters
-            # so drafting never blocks
+
             stmt = (
                 select(LetterMemory)
                 .order_by(LetterMemory.created_at.desc())
