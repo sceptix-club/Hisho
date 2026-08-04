@@ -12,6 +12,7 @@ dependencies = [
     "google-adk>=1.33.0",
     "google-api-python-client>=2.196.0",
     "google-auth>=2.38.0",
+    "greenlet>=3.0.0",
     "httpx>=0.28.0",
     "litellm>=1.83.14",
     "passlib>=1.7.4",
