@@ -15,7 +15,7 @@ doc_id#tab_id. Pass --force to re-extract and re-embed existing tabs in
 place (e.g. after an extractor change).
 """
 
-import logging
+
 import asyncio
 import sys
 import uuid
@@ -32,7 +32,7 @@ from services.embeddings import embed_text
 from services.llm_extract import (
     LetterExtractionOutput,
     extract_letter_metadata,
-    identify_template_replacements,
+    identify_template_replacements_chunked,
 )
 
 
@@ -77,15 +77,10 @@ async def _load_existing_memories(
 
 async def _load_existing_designations(
     session: AsyncSession,
-) -> tuple[dict[str, Designation], set[str]]:
-    """Return (code→Designation dict, set of known titles) for dedup."""
+) -> dict[str, Designation]:
+    """Return a code→Designation dict for dedup."""
     result = await session.execute(select(Designation))
-    by_code: dict[str, Designation] = {}
-    known_titles: set[str] = set()
-    for d in result.scalars():
-        by_code[d.code] = d
-        known_titles.add(d.title)
-    return by_code, known_titles
+    return {d.code: d for d in result.scalars()}
 
 
 
@@ -132,9 +127,9 @@ def _upsert_designations(
     session: AsyncSession,
     extraction: LetterExtractionOutput,
     existing_codes: dict[str, Designation],
-    known_titles: set[str],
 ) -> int:
     """Insert any new designations from the approval chain. Returns count added."""
+    known_titles = {d.title for d in existing_codes.values()}
     count = 0
     for step in extraction.approval_chain:
         if step.designation_code in existing_codes:
@@ -162,11 +157,13 @@ async def _process_tab(
     force: bool,
     existing: dict[str, LetterTypeMemory],
     existing_codes: dict[str, Designation],
-    known_titles: set[str],
-    docs_service: GoogleDocsService,
-    template_folder_id: str,
+    template_url: str | None = None,
 ) -> tuple[str, int]:
-    """Process a single tab: extract, embed, generate template, upsert.
+    """Process a single tab: extract, embed, upsert.
+
+    Template generation (copy + per-tab replacement) is handled separately
+    by the caller. This function only handles metadata extraction, embedding,
+    and DB persistence.
 
     Returns:
         (status, designations_added) where status is one of
@@ -191,57 +188,6 @@ async def _process_tab(
     extraction = await extract_letter_metadata(text)
     embedding = await embed_text(extraction.description)
 
-    # --- Copy-and-replace template generation ---
-    # Step 1: Create an exact copy of the original doc via Drive copy
-    print(f"  📋 Copying original document for '{title}' …")
-    template_doc = await asyncio.to_thread(
-        docs_service.copy_document_to_folder,
-        doc_id,
-        f"Template - {extraction.type_name}",
-        template_folder_id,
-    )
-    
-    copy_doc_id = template_doc["document_id"]
-
-    # Step 2: Delete all tabs except the one we're processing
-    print(f"  🗑️  Removing extra tabs from copy …")
-    await asyncio.to_thread(
-        docs_service.delete_tabs_except,
-        copy_doc_id,
-        tab_id,
-    )
-
-    # Step 3: Fetch JSON of the copy and extract text from our tab
-    print(f"  📄 Fetching JSON of the copy …")
-    copy_doc = await asyncio.to_thread(
-        docs_service.fetch_document, copy_doc_id, True
-    )
-    copy_tabs = list(_flatten_tabs(copy_doc.get("tabs", [])))
-    copy_tab = next(
-        (t for t in copy_tabs
-         if t.get("tabProperties", {}).get("tabId") == tab_id),
-        None,
-    )
-    copy_text = (
-        GoogleDocsService.extract_text(copy_tab.get("documentTab", {}))
-        if copy_tab
-        else text  # fallback to original text if tab not found
-    )
-
-    print(f"  📝 Identifying template replacements for '{title}' …")
-    replacements = await identify_template_replacements(copy_text)
-    print(f"     Found {len(replacements)} replacements")
-
-    # Step 5: Apply placeholder replacements on the copy
-    await asyncio.to_thread(
-        docs_service.apply_template_replacements,
-        copy_doc_id,
-        [r.model_dump() for r in replacements],
-    )
-    template_url = template_doc["url"]
-    print(f"  ✅ Template created: {template_url}")
-
-
     if row:
         _update_memory_row(row, extraction, embedding, template_url=template_url)
         print(f"  ~ {title} → {extraction.type_name}")
@@ -256,8 +202,44 @@ async def _process_tab(
         print(f"  + {title} → {extraction.type_name}")
         status = "added"
 
-    desg_count = _upsert_designations(session, extraction, existing_codes, known_titles)
+    desg_count = _upsert_designations(session, extraction, existing_codes)
     return status, desg_count
+
+
+async def _generate_template_from_copy(
+    docs_service: GoogleDocsService,
+    copy_doc_id: str,
+    copy_tabs: list[dict],
+) -> None:
+    """Iterate over all tabs in the copied document, chunk each tab's raw
+    JSON structure, and use the chunked pipeline to identify replacements.
+
+    Uses :func:`identify_template_replacements_chunked` which preserves
+    document structure (tables, headings, headers/footers) so that small
+    models like Qwen 7B can reliably identify placeholders.
+    """
+    for copy_tab in copy_tabs:
+        props = copy_tab.get("tabProperties", {})
+        tab_title = props.get("title") or "Untitled tab"
+        tab_id = props.get("tabId", "")
+
+        document_tab = copy_tab.get("documentTab", {})
+        if not document_tab.get("body", {}).get("content"):
+            print(f"    ⏭️  Skipping empty tab '{tab_title}'")
+            continue
+
+        print(f"    📝 Identifying template replacements for tab '{tab_title}' …")
+        replacements = await identify_template_replacements_chunked(document_tab)
+        print(f"       Found {len(replacements)} replacements")
+
+        if replacements:
+            await asyncio.to_thread(
+                docs_service.apply_template_replacements,
+                copy_doc_id,
+                [r.model_dump() for r in replacements],
+                tab_id,
+            )
+            print(f"✅ Replacements applied for tab '{tab_title}'")
 
 
 
@@ -279,17 +261,41 @@ async def main() -> None:
     )
     print(f"Using Templates folder (id={template_folder_id})")
 
+    # --- Create a single copy of the original document ---
+    print(f"📋 Copying original document '{doc_title}' …")
+    template_doc = await asyncio.to_thread(
+        docs_service.copy_document_to_folder,
+        doc_id,
+        f"Template - {doc_title}",
+        template_folder_id,
+    )
+    copy_doc_id = template_doc["document_id"]
+    template_url = template_doc["url"]
+    print(f"✅ Copy created: {template_url}")
+
+    # --- Fetch the copy's tabs and apply replacements per tab ---
+    print(f"📄 Fetching copy's tabs …")
+    copy_doc = await asyncio.to_thread(
+        docs_service.fetch_document, copy_doc_id, True
+    )
+    copy_tabs = list(_flatten_tabs(copy_doc.get("tabs", [])))
+    print(f"   Copy has {len(copy_tabs)} tabs")
+
+    await _generate_template_from_copy(docs_service, copy_doc_id, copy_tabs)
+    print(f"✅ Template generation complete: {template_url}")
+
+    # --- Process each original tab for metadata extraction and DB upsert ---
     async with AsyncSessionLocal() as session:
         existing = await _load_existing_memories(session)
-        existing_codes, known_titles = await _load_existing_designations(session)
+        existing_codes = await _load_existing_designations(session)
 
         added = updated = skipped = designations_added = 0
 
         for tab in tabs:
-            logging.critical(f"Processing tab: {tab}")
+            print(f"  🔍 Processing tab: {tab.get('tabProperties', {}).get('title', 'unknown')}")
             status, desg_count = await _process_tab(
-                session, tab, doc_id, force, existing, existing_codes, known_titles,
-                docs_service, template_folder_id,
+                session, tab, doc_id, force, existing, existing_codes,
+                template_url=template_url,
             )
             if status == "added":
                 added += 1
@@ -305,6 +311,7 @@ async def main() -> None:
         f"Done: {added} added, {updated} updated, {skipped} skipped, "
         f"{designations_added} new designations"
     )
+
 
 
 if __name__ == "__main__":

@@ -1,18 +1,6 @@
-import html as html_lib
-
-from googleapiclient.http import MediaInMemoryUpload
-
 from config import Settings
 from services.docs_services.google_client import GoogleUserClient
 
-
-def _flatten_tabs_static(tabs: list[dict]) -> list[dict]:
-    """Recursively yield every tab (including nested child tabs)."""
-    result: list[dict] = []
-    for tab in tabs:
-        result.append(tab)
-        result.extend(_flatten_tabs_static(tab.get("childTabs", [])))
-    return result
 
 class GoogleDocsService:
     def __init__(self, settings: Settings, access_token: str, refresh_token: str):
@@ -185,71 +173,9 @@ class GoogleDocsService:
         print("Web Url ----> ",web_url)
         return {"document_id": copy_id, "title": title, "url": web_url}
 
-    def delete_tabs_except(self, document_id: str, keep_tab_id: str) -> None:
-        """Delete every tab in the document except the one with *keep_tab_id*.
-
-        Fetches the document's tab structure, then issues ``deleteTab``
-        batch-update requests for all tabs whose ID ≠ *keep_tab_id*.
-        """
-        doc = self.fetch_document(document_id, include_tabs=True)
-        all_tabs = list(_flatten_tabs_static(doc.get("tabs", [])))
-        to_delete = [
-            t.get("tabProperties", {}).get("tabId")
-            for t in all_tabs
-            if t.get("tabProperties", {}).get("tabId") != keep_tab_id
-        ]
-        if not to_delete:
-            return
-
-        requests = [{"deleteTab": {"tabId": tid}} for tid in to_delete]
-        self._client.service.documents().batchUpdate(
-            documentId=document_id, body={"requests": requests}
-        ).execute()
-
-    def create_document_in_folder(
-        self, title: str, content: str, folder_id: str
-    ) -> dict:
-        """Create a new Google Doc inside *folder_id* and return its metadata.
-
-        Returns:
-            ``{"document_id": str, "title": str, "url": str}``
-        """
-        file_meta = {
-            "name": title,
-            "mimeType": "application/vnd.google-apps.document",
-            "parents": [folder_id],
-        }
-        file = (
-            self._client.drive_service.files()
-            .create(body=file_meta, fields="id, webViewLink")
-            .execute()
-        )
-
-        document_id = file["id"]
-        web_url = file.get(
-            "webViewLink",
-            f"https://docs.google.com/document/d/{document_id}/edit",
-        )
-
-        self._client.service.documents().batchUpdate(
-            documentId=document_id,
-            body={
-                "requests": [
-                    {
-                        "insertText": {
-                            "location": {"index": 1},
-                            "text": content,
-                        }
-                    }
-                ]
-            },
-        ).execute()
-
-        return {"document_id": document_id, "title":  title, "url": web_url}
-
-
     def apply_template_replacements(
-        self, document_id: str, replacements: list[dict]
+        self, document_id: str, replacements: list[dict],
+        tab_id: str | None = None,
     ) -> dict:
         """Apply ``replaceAllText`` requests to turn a document into a template.
 
@@ -257,6 +183,8 @@ class GoogleDocsService:
             document_id: ID of the Google Doc to modify.
             replacements: List of dicts with ``original_text`` and
                 ``placeholder`` keys.
+            tab_id: Optional tab ID to scope replacements to a specific tab.
+                When ``None``, replacements apply to all tabs.
 
         Returns:
             A summary dict with the document_id, count of replacements
@@ -268,8 +196,9 @@ class GoogleDocsService:
                 "message": "No replacements to apply",
             }
 
-        requests = [
-            {
+        requests = []
+        for r in replacements:
+            req: dict = {
                 "replaceAllText": {
                     "containsText": {
                         "text": r["original_text"],
@@ -278,8 +207,11 @@ class GoogleDocsService:
                     "replaceText": r["placeholder"],
                 }
             }
-            for r in replacements
-        ]
+            if tab_id:
+                req["replaceAllText"]["tabsCriteria"] = {
+                    "tabIds": [tab_id],
+                }
+            requests.append(req)
 
         response = (
             self._client.service.documents()

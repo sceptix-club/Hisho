@@ -12,6 +12,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from config import settings
+from services.doc_chunker import chunk_document, chunks_to_prompt_text
 
 _OLLAMA_MODEL = settings.letter_model.removeprefix("ollama_chat/")
 
@@ -152,11 +153,11 @@ Output a JSON object with a single key "replacements" containing an array of
 objects, each with:
 - "original_text": the EXACT text as it appears in the letter (character-for-
   character match required)
-- "placeholder": a descriptive {{snake_case_placeholder}} name
+- "placeholder": a descriptive {{snake_case_placeholder}} name or standard generic text
 
 Examples of replacements:
 - {"original_text": "Dr. K. Ramesh Babu", "placeholder": "{{recipient_name}}"}
-- {"original_text": "Head of Department - CSE", "placeholder": "{{recipient_designation}}"}
+- {"original_text": "Head of Department - CSE", "placeholder": "Head of Department - {{department_name}}"}
 - {"original_text": "12/03/2024", "placeholder": "{{date}}"}
 - {"original_text": "Ref. No. NMAMIT/CSE/2024-25/001", "placeholder": "{{reference_number}}"}
 - {"original_text": "Annual Tech Fest 2024", "placeholder": "{{event_name}}"}
@@ -168,14 +169,13 @@ Rules:
 - Use descriptive snake_case names for placeholders, wrapped in {{ and }}.
 - Replace ALL instance-specific values: names, dates, amounts, reference
   numbers, addresses, event names, venue names, department names, etc.
-- For body paragraphs that describe the specific request, replace KEY VALUES
-  within them (dates, names, amounts) — do NOT replace entire paragraphs.
+- IMPORTANT (BODY REMOVAL): Replace the entire body section of the letter (the paragraph(s) containing the core message or specific request between the salutation and closing) with a single clean placeholder text like "[Insert Letter Body Here]" or "{{letter_body}}".
 - Do NOT replace structural labels ("To:", "From:", "Subject:", "Date:",
   "Ref. No.:", "Through,", "Respected Sir,", "Yours sincerely,", etc.).
 - Do NOT replace generic phrases, salutations, or closing formulas.
   Examples of text you must NEVER replace:
   "Through,", "Respected Sir,", "Yours sincerely,", "Yours faithfully,",
-  "The Principal", "The Head of Department", entire body paragraphs.
+  "The Principal", "The Head of Department".
 - Each original_text should be long enough to be unambiguous — prefer
   "Head of Department - CSE" over just "CSE".
 - Every object MUST have both "original_text" and "placeholder" keys.
@@ -200,15 +200,28 @@ def _build_replacement_payload(text: str) -> dict:
 def _parse_replacements(raw: str) -> list[TemplateReplacement]:
     """Parse and validate the raw LLM JSON string into replacement pairs.
 
+    Handles two possible LLM output shapes:
+    - ``{"replacements": [...]}`` — validated via ``TemplateReplacementOutput``
+    - ``[...]`` — a bare list of replacement objects
+
     Malformed entries (e.g. missing ``placeholder``) are silently skipped
     so that a few bad items from the LLM don't crash the whole pipeline.
     """
     cleaned = _clean_llm_response(raw)
     data = json.loads(cleaned)
 
+    # Normalise: extract the raw list of replacement dicts
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = TemplateReplacementOutput.model_validate(data).replacements
+        return list(items)  # already validated as TemplateReplacement objects
+    else:
+        return []
+
     # Validate each replacement individually so bad entries are skipped
     valid: list[TemplateReplacement] = []
-    for item in data.get("replacements", []):
+    for item in items:
         try:
             valid.append(TemplateReplacement.model_validate(item))
         except Exception:
@@ -225,10 +238,136 @@ async def identify_template_replacements(text: str) -> list[TemplateReplacement]
     Google Docs ``replaceAllText`` API on a formatted copy of the original
     document, producing a template that preserves all original formatting.
     """
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=260) as client:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/chat",
             json=_build_replacement_payload(text),
+        )
+        resp.raise_for_status()
+        raw = resp.json()["message"]["content"]
+
+    return _parse_replacements(raw)
+
+
+# ── Chunked template extraction (optimised for small models) ──────────
+
+
+_CHUNKED_REPLACEMENT_SYSTEM_PROMPT = """\
+You are a template extraction assistant.
+
+## YOUR TASK
+You receive a letter split into labelled chunks.
+Find every value that changes between letters and replace it with a placeholder.
+Output ONLY a JSON object. No other text.
+
+## INPUT FORMAT
+The letter is split into chunks. Each chunk has a header line like:
+[CHUNK 1 | type=paragraph | role=heading]
+followed by the chunk text.
+
+Chunk types:
+- paragraph / paragraph_group: regular text (headings, body, addresses)
+- table: data in rows and columns
+- header / footer: text from the page header or footer area
+
+## OUTPUT FORMAT
+Return a JSON object with one key "replacements". The value is an array.
+Each item has exactly two keys:
+- "original_text": the EXACT text from the letter to replace. Must be copied character-for-character.
+- "placeholder": a {{snake_case}} name OR descriptive generic text.
+
+Example output:
+{
+  "replacements": [
+    {"original_text": "Dr. K. Ramesh Babu", "placeholder": "{{recipient_name}}"},
+    {"original_text": "12/03/2024", "placeholder": "{{date}}"},
+    {"original_text": "Ref. No. NMAMIT/CSE/2024-25/001", "placeholder": "{{reference_number}}"},
+    {"original_text": "Head of Department - CSE", "placeholder": "Head of Department - {{department_name}}"},
+    {"original_text": "Annual Tech Fest 2024", "placeholder": "{{event_name}}"},
+    {"original_text": "50,000", "placeholder": "{{amount}}"},
+    {"original_text": "Seminar Hall - Block A", "placeholder": "{{venue}}"}
+  ]
+}
+
+## WHAT TO REPLACE
+Replace these kinds of values:
+- Person names (Dr. K. Ramesh Babu → {{recipient_name}})
+- Dates (12/03/2024 → {{date}})
+- Reference numbers (Ref. No. NMAMIT/CSE/2024-25/001 → {{reference_number}})
+- Department names when part of a title (CSE → {{department_name}})
+- Event names (Annual Tech Fest 2024 → {{event_name}})
+- Money amounts (₹50,000 → {{amount}})
+- Venue / location names (Seminar Hall → {{venue}})
+- Specific quantities and counts
+- The main body paragraph(s) between salutation and closing → {{letter_body}}
+
+For TABLE chunks:
+- Replace specific data values in cells (amounts, names, items)
+- Do NOT replace column header labels (like "Sl. No.", "Item", "Amount")
+- Do NOT replace row numbers (1, 2, 3...)
+
+## WHAT TO NEVER REPLACE
+Never replace any of these:
+- "Through," / "To:" / "From:" / "Subject:" / "Date:" / "Ref. No.:"
+- "Respected Sir," / "Respected Madam,"
+- "Yours sincerely," / "Yours faithfully,"
+- "The Principal" / "The Head of Department"
+- Table column headers
+- Generic greetings or closing formulas
+
+## RULES
+1. original_text MUST be an exact substring of the input text.
+2. Use descriptive snake_case names inside {{ and }}.
+3. Every item MUST have both "original_text" and "placeholder" keys.
+4. Output ONLY valid JSON. No markdown. No commentary.
+"""
+
+
+def _build_chunked_replacement_payload(chunks_text: str) -> dict:
+    """Build the Ollama /api/chat request for chunked replacement extraction."""
+    return {
+        "model": _OLLAMA_MODEL,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": _CHUNKED_REPLACEMENT_SYSTEM_PROMPT},
+            {"role": "user", "content": chunks_text[:12000]},
+        ],
+        "format": "json",
+    }
+
+
+async def identify_template_replacements_chunked(
+    document_tab: dict,
+) -> list[TemplateReplacement]:
+    """Chunk a raw Google Docs ``documentTab`` and extract template replacements.
+
+    Unlike :func:`identify_template_replacements` which operates on plain
+    text, this function preserves document structure by converting the raw
+    API JSON into labelled chunks (paragraphs, tables, headers, footers)
+    before sending them to the LLM.  This yields much better results with
+    small models like Qwen 7B that struggle to infer structure from flat
+    text.
+
+    Args:
+        document_tab: The ``tab["documentTab"]`` portion of a Docs API
+            response (fetched with ``includeTabsContent=True``).
+
+    Returns:
+        A list of :class:`TemplateReplacement` pairs ready for
+        ``replaceAllText`` via the Docs API.
+    """
+    chunks = chunk_document(document_tab)
+    if not chunks:
+        return []
+
+    chunks_text = chunks_to_prompt_text(chunks)
+    print(f"    📦 Chunked document into {len(chunks)} chunks "
+          f"({len(chunks_text)} chars)")
+
+    async with httpx.AsyncClient(timeout=260) as client:
+        resp = await client.post(
+            f"{settings.ollama_base_url}/api/chat",
+            json=_build_chunked_replacement_payload(chunks_text),
         )
         resp.raise_for_status()
         raw = resp.json()["message"]["content"]
