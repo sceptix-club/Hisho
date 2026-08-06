@@ -48,6 +48,25 @@ class GoogleDocsService:
                 )
         return "".join(parts)
 
+    @staticmethod
+    def extract_inline_image_urls(doc: dict) -> list[str]:
+        """Extract all inline image URLs (contentUri) from the document."""
+        urls = []
+        inline_objects = doc.get("inlineObjects", {})
+        for obj_id, obj_data in inline_objects.items():
+            try:
+                uri = (
+                    obj_data.get("inlineObjectProperties", {})
+                    .get("embeddedObject", {})
+                    .get("imageProperties", {})
+                    .get("contentUri")
+                )
+                if uri:
+                    urls.append(uri)
+            except Exception:
+                continue
+        return urls
+
 
     def create_document(self, title: str, content: str) -> dict:
         file = self._client.drive_service.files().create(
@@ -112,116 +131,3 @@ class GoogleDocsService:
             }
         except Exception as e:
             return {"error": f"Failed to edit document: {str(e)}"}
-
-    def ensure_folder(self, folder_name: str) -> str:
-        """Return the ID of a Drive folder with *folder_name*, creating it if absent.
-
-        Searches only for folders owned by the authenticated user that are
-        not in the trash.
-        """
-        query = (
-            f"name = '{folder_name}' "
-            "and mimeType = 'application/vnd.google-apps.folder' "
-            "and trashed = false"
-        )
-        results = (
-            self._client.drive_service.files()
-            .list(q=query, spaces="drive", fields="files(id, name)")
-            .execute()
-        )
-        files = results.get("files", [])
-        if files:
-            return files[0]["id"]
-
-        folder_meta = {
-            "name": folder_name,
-            "mimeType": "application/vnd.google-apps.folder",
-        }
-        folder = (
-            self._client.drive_service.files()
-            .create(body=folder_meta, fields="id")
-            .execute()
-        )
-        return folder["id"]
-
-    def copy_document_to_folder(
-        self, document_id: str, title: str, folder_id: str
-    ) -> dict:
-        """Create an exact copy of a Google Doc inside *folder_id* via Drive copy.
-
-        Uses ``files().copy()`` which preserves all formatting, tables,
-        styles, headers, footers, etc. — no lossy HTML round-trip.
-
-        Returns:
-            ``{"document_id": str, "title": str, "url": str}``
-        """
-        copy_meta = {"name": title, "parents": [folder_id]}
-        copied = (
-            self._client.drive_service.files()
-            .copy(
-                fileId=document_id,
-                body=copy_meta,
-                fields="id, webViewLink",
-            )
-            .execute()
-        )
-        copy_id = copied["id"]
-        web_url = copied.get(
-            "webViewLink",
-            f"https://docs.google.com/document/d/{copy_id}/edit",
-        )
-        print("Web Url ----> ",web_url)
-        return {"document_id": copy_id, "title": title, "url": web_url}
-
-    def apply_template_replacements(
-        self, document_id: str, replacements: list[dict],
-        tab_id: str | None = None,
-    ) -> dict:
-        """Apply ``replaceAllText`` requests to turn a document into a template.
-
-        Args:
-            document_id: ID of the Google Doc to modify.
-            replacements: List of dicts with ``original_text`` and
-                ``placeholder`` keys.
-            tab_id: Optional tab ID to scope replacements to a specific tab.
-                When ``None``, replacements apply to all tabs.
-
-        Returns:
-            A summary dict with the document_id, count of replacements
-            applied, and the raw batchUpdate replies.
-        """
-        if not replacements:
-            return {
-                "document_id": document_id,
-                "message": "No replacements to apply",
-            }
-
-        requests = []
-        for r in replacements:
-            req: dict = {
-                "replaceAllText": {
-                    "containsText": {
-                        "text": r["original_text"],
-                        "matchCase": True,
-                    },
-                    "replaceText": r["placeholder"],
-                }
-            }
-            if tab_id:
-                req["replaceAllText"]["tabsCriteria"] = {
-                    "tabIds": [tab_id],
-                }
-            requests.append(req)
-
-        response = (
-            self._client.service.documents()
-            .batchUpdate(
-                documentId=document_id, body={"requests": requests}
-            )
-            .execute()
-        )
-        return {
-            "document_id": document_id,
-            "replacements_applied": len(replacements),
-            "replies": response.get("replies", []),
-        }

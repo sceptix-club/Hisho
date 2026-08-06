@@ -8,11 +8,10 @@ and a JSON-mode system prompt that matches ``LetterExtractionOutput``.
 import json
 import re
 
-import httpx
 from pydantic import BaseModel, Field
 
 from config import settings
-from services.doc_chunker import chunk_document, chunks_to_prompt_text
+from services.ollama_client import call_ollama_api
 
 _OLLAMA_MODEL = settings.letter_model.removeprefix("ollama_chat/")
 
@@ -22,78 +21,112 @@ _OLLAMA_MODEL = settings.letter_model.removeprefix("ollama_chat/")
 class ApprovalStep(BaseModel):
     step_number: int = Field(description="Sequence number starting at 1")
     designation_title: str = Field(
-        description="Full title of the post, e.g., 'Head of Department - CSE'"
+        description="The designation name (e.g. 'Head of Department - CSE'). Omit college/company name."
     )
-    designation_code: str = Field(
-        description="Short unique code for the designation, e.g., 'HOD_CSE'"
+    incumbent: str | None = Field(description="The name of the person holding the designation, if present.", default=None)
+
+
+class TableInfo(BaseModel):
+    summary: str | None = Field(description="High level summary, e.g. Budget breakdown", default=None)
+    category: str | None = Field(description="<FINANCIAL | TIMELINE | ROSTER | INVENTORY | OTHER>", default=None)
+    headers: list[str] = Field(
+        description="List of column headers in the table, if any. Empty list if none.",
+        default_factory=list
     )
+
+
+class SignatureInfo(BaseModel):
+    url: str | None = Field(description="URL of the image that acts as a signature", default=None)
+    name: str | None = Field(description="The name of the signee.", default=None)
 
 
 class LetterExtractionOutput(BaseModel):
-    type_name: str = Field(
-        description="Categorical name of the letter type, e.g., 'Fund Release Request'"
+    letter_type: str = Field(
+        description="Exactly one enum value from list above"
+    )
+    primary_domain: str = Field(
+        description="<FINANCE | LOGISTICS | INFRASTRUCTURE | ACADEMICS | EVENT | GENERAL>"
     )
     description: str = Field(
         description=(
-            "A concise summary of the letter's purpose for semantic vector search"
+            "A clear, general-purpose summary using the full body that projects the letter's intent."
         )
+    )
+    table_info: TableInfo | None = Field(
+        description="Information about the tabular data block, if one exists",
+        default=None,
     )
     approval_chain: list[ApprovalStep] = Field(
         description=(
             "Ordered list of approvers from bottom (first) to top (final recipient)"
         )
     )
-    required_sections: list[str] = Field(
-        description=(
-            "List of detected structural blocks, e.g. "
-            "['ref_no', 'date', 'recipient', 'through_chain', "
-            "'subject', 'budget_table', 'sign_off']"
-        )
+    signatures: list[SignatureInfo] = Field(
+        description="List of identified signatures and their designations",
+        default_factory=list
     )
 
 
 
 _SYSTEM_PROMPT = """\
-You are a structured-data extraction assistant. You will receive the full
-plain-text of an official letter. Respond with **only** a JSON object that
-conforms to the schema below — no markdown fences, no commentary.
+You are a structured-data extraction assistant for an institutional document archiving system. 
+Analyze the provided JSON document structure (which contains text, tables, and image URLs) and output ONLY a JSON object conforming strictly to the schema below.
+
+Categories for `letter_type` (Choose EXACTLY ONE based on Intent + Domain):
+- FINANCIAL_REQUEST (Releasing funds, budget approvals, sponsorships, reimbursements)
+- VENUE_PERMISSION (Requesting classrooms, auditoriums, labs, halls)
+- EQUIPMENT_REQUEST (Borrowing cameras, systems, AV gear, vehicles, physical assets)
+- EVENT_APPROVAL (Permission to host workshops, hackathons, seminars, fests)
+- ACADEMIC_DUTY_LEAVE (Attendance clearance, duty leave for students/staff)
+- OFFICIAL_CIRCULAR (Notices, announcements, mandates sent downward)
+- INVITATION (Inviting chief guests, speakers, external judges)
+- GENERAL_CORRESPONDENCE (Any formal letter that does not fit above)
 
 Schema:
 {
-  "type_name": "<string – categorical name of the letter type>",
-  "description": "<string – concise summary of the letter's purpose>",
+  "reference_number": "<string or null - Ref No from header>",
+  "letter_type": "<string - Exactly one enum value from list above>",
+  "primary_domain": "<string - FINANCE | LOGISTICS | INFRASTRUCTURE | ACADEMICS | EVENT | GENERAL>",
+  "description": "<string - Abstract 1-sentence summary WITHOUT specific dates, names, or item lists. E.g. 'Requesting temporary equipment loan for an upcoming technical workshop.'>",
+  "table_info": { // Set to null if there are no tables
+    "summary": "<string or null - High level summary, e.g. Budget breakdown>",
+    "category": "<string or null - FINANCIAL | TIMELINE | ROSTER | INVENTORY | OTHER>",
+    "headers": ["<string - Column 1 header>", "<string - Column 2 header>"]
+  },
   "approval_chain": [
     {
-      "step_number": <int – sequence starting at 1, bottom-up>,
-      "designation_title": "<string – full title of the post>",
-      "designation_code": "<string – short unique code, e.g. HOD_CSE>"
+      "step_number": <int - bottom-up sequence starting at 1>,
+      "designation_title": "<string - The designation name exactly what is written in the line nothing removed nothing added >",
+      "incumbent": "<string or null - The name of the person holding the designation, if present exact name no addition from your side>"
     }
   ],
-  "required_sections": ["<string>", "..."]
+  "signatures": [
+    {
+      "url": "<string - URL of image that is a signature>",
+      "name": "<string - The name of the signee>"
+    }
+  ]
 }
 
 Rules:
-- type_name should be a human-readable category.
-- description is a one- or two-sentence summary suitable for semantic search.
-- approval_chain is ordered bottom-up: step 1 is the first endorser, the
-  last step is the final recipient / approver.
-- required_sections lists detected structural blocks using snake_case keys
-  (e.g. ref_no, date, recipient, through_chain, subject, body,
-  budget_table, sign_off).
-- Output ONLY valid JSON. No extra text.
+- DO NOT default to a generic 'REQUEST' for letter_type. Always qualify it using the subject and target domain.
+- `description` MUST be abstract and general. Never include specific dates (e.g. 13 July 2026), specific names, or itemized lists.
+- `approval_chain` MUST be bottom-up (Step 1 is the first endorser, final step is the top recipient).
+- `signatures` MUST ONLY include URLs of images that act as signatures (typically found at the end of the document or near approval titles), ignoring logos, letterheads, or structural images. It MUST also include the name of the signee.
+- Output raw JSON only. No markdown formatting, no backticks, no commentary.
 """
 
 
 
-
-def _build_chat_payload(text: str) -> dict:
+def _build_chat_payload(payload_json: str) -> dict:
     """Build the Ollama /api/chat request body for letter extraction."""
     return {
         "model": _OLLAMA_MODEL,
         "stream": False,
+        "think": False,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text[:12000]},
+            {"role": "user", "content": payload_json[:12000]},
         ],
         "format": "json",
     }
@@ -115,262 +148,13 @@ def _parse_extraction(raw: str) -> LetterExtractionOutput:
 
 
 
-async def extract_letter_metadata(text: str) -> LetterExtractionOutput:
-    """Send letter text to Ollama and return validated extraction."""
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{settings.ollama_base_url}/api/chat",
-            json=_build_chat_payload(text),
-        )
-        resp.raise_for_status()
-        raw = resp.json()["message"]["content"]
+async def extract_letter_metadata(payload_json: str) -> LetterExtractionOutput:
+    """Send letter JSON payload to Ollama and return validated extraction."""
+    resp_data = await call_ollama_api(
+        "/api/chat",
+        payload=_build_chat_payload(payload_json),
+        timeout=120,
+    )
+    raw = resp_data["message"]["content"]
 
     return _parse_extraction(raw)
-
-
-class TemplateReplacement(BaseModel):
-    original_text: str = Field(
-        description="Exact text from the letter to replace"
-    )
-    placeholder: str = Field(
-        description="{{snake_case}} placeholder name for the template"
-    )
-
-
-class TemplateReplacementOutput(BaseModel):
-    replacements: list[TemplateReplacement] = Field(
-        description="List of text-to-placeholder replacement pairs"
-    )
-
-
-_REPLACEMENT_SYSTEM_PROMPT = """\
-You are a template extraction assistant. You will receive the full plain-text
-of an official letter. Identify every instance-specific value that should be
-replaced with a reusable placeholder to turn this letter into a generic
-template.
-
-Output a JSON object with a single key "replacements" containing an array of
-objects, each with:
-- "original_text": the EXACT text as it appears in the letter (character-for-
-  character match required)
-- "placeholder": a descriptive {{snake_case_placeholder}} name or standard generic text
-
-Examples of replacements:
-- {"original_text": "Dr. K. Ramesh Babu", "placeholder": "{{recipient_name}}"}
-- {"original_text": "Head of Department - CSE", "placeholder": "Head of Department - {{department_name}}"}
-- {"original_text": "12/03/2024", "placeholder": "{{date}}"}
-- {"original_text": "Ref. No. NMAMIT/CSE/2024-25/001", "placeholder": "{{reference_number}}"}
-- {"original_text": "Annual Tech Fest 2024", "placeholder": "{{event_name}}"}
-- {"original_text": "₹50,000", "placeholder": "{{amount}}"}
-- {"original_text": "Seminar Hall - Block A", "placeholder": "{{venue}}"}
-
-Rules:
-- original_text MUST be an EXACT substring of the input letter text.
-- Use descriptive snake_case names for placeholders, wrapped in {{ and }}.
-- Replace ALL instance-specific values: names, dates, amounts, reference
-  numbers, addresses, event names, venue names, department names, etc.
-- IMPORTANT (BODY REMOVAL): Replace the entire body section of the letter (the paragraph(s) containing the core message or specific request between the salutation and closing) with a single clean placeholder text like "[Insert Letter Body Here]" or "{{letter_body}}".
-- Do NOT replace structural labels ("To:", "From:", "Subject:", "Date:",
-  "Ref. No.:", "Through,", "Respected Sir,", "Yours sincerely,", etc.).
-- Do NOT replace generic phrases, salutations, or closing formulas.
-  Examples of text you must NEVER replace:
-  "Through,", "Respected Sir,", "Yours sincerely,", "Yours faithfully,",
-  "The Principal", "The Head of Department".
-- Each original_text should be long enough to be unambiguous — prefer
-  "Head of Department - CSE" over just "CSE".
-- Every object MUST have both "original_text" and "placeholder" keys.
-  Never omit the "placeholder" key.
-- Output ONLY valid JSON. No markdown fences, no commentary.
-"""
-
-
-def _build_replacement_payload(text: str) -> dict:
-    """Build the Ollama /api/chat request body for replacement identification."""
-    return {
-        "model": _OLLAMA_MODEL,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": _REPLACEMENT_SYSTEM_PROMPT},
-            {"role": "user", "content": text[:12000]},
-        ],
-        "format": "json",
-    }
-
-
-def _parse_replacements(raw: str) -> list[TemplateReplacement]:
-    """Parse and validate the raw LLM JSON string into replacement pairs.
-
-    Handles two possible LLM output shapes:
-    - ``{"replacements": [...]}`` — validated via ``TemplateReplacementOutput``
-    - ``[...]`` — a bare list of replacement objects
-
-    Malformed entries (e.g. missing ``placeholder``) are silently skipped
-    so that a few bad items from the LLM don't crash the whole pipeline.
-    """
-    cleaned = _clean_llm_response(raw)
-    data = json.loads(cleaned)
-
-    # Normalise: extract the raw list of replacement dicts
-    if isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        items = TemplateReplacementOutput.model_validate(data).replacements
-        return list(items)  # already validated as TemplateReplacement objects
-    else:
-        return []
-
-    # Validate each replacement individually so bad entries are skipped
-    valid: list[TemplateReplacement] = []
-    for item in items:
-        try:
-            valid.append(TemplateReplacement.model_validate(item))
-        except Exception:
-            # Skip malformed entries (e.g. missing placeholder)
-            continue
-    return valid
-
-
-async def identify_template_replacements(text: str) -> list[TemplateReplacement]:
-    """Send letter text to Ollama and return replacement pairs for templating.
-
-    The LLM identifies instance-specific values in the letter and suggests
-    ``{{placeholder}}`` replacements.  These pairs are then applied via the
-    Google Docs ``replaceAllText`` API on a formatted copy of the original
-    document, producing a template that preserves all original formatting.
-    """
-    async with httpx.AsyncClient(timeout=260) as client:
-        resp = await client.post(
-            f"{settings.ollama_base_url}/api/chat",
-            json=_build_replacement_payload(text),
-        )
-        resp.raise_for_status()
-        raw = resp.json()["message"]["content"]
-
-    return _parse_replacements(raw)
-
-
-# ── Chunked template extraction (optimised for small models) ──────────
-
-
-_CHUNKED_REPLACEMENT_SYSTEM_PROMPT = """\
-You are a template extraction assistant.
-
-## YOUR TASK
-You receive a letter split into labelled chunks.
-Find every value that changes between letters and replace it with a placeholder.
-Output ONLY a JSON object. No other text.
-
-## INPUT FORMAT
-The letter is split into chunks. Each chunk has a header line like:
-[CHUNK 1 | type=paragraph | role=heading]
-followed by the chunk text.
-
-Chunk types:
-- paragraph / paragraph_group: regular text (headings, body, addresses)
-- table: data in rows and columns
-- header / footer: text from the page header or footer area
-
-## OUTPUT FORMAT
-Return a JSON object with one key "replacements". The value is an array.
-Each item has exactly two keys:
-- "original_text": the EXACT text from the letter to replace. Must be copied character-for-character.
-- "placeholder": a {{snake_case}} name OR descriptive generic text.
-
-Example output:
-{
-  "replacements": [
-    {"original_text": "Dr. K. Ramesh Babu", "placeholder": "{{recipient_name}}"},
-    {"original_text": "12/03/2024", "placeholder": "{{date}}"},
-    {"original_text": "Ref. No. NMAMIT/CSE/2024-25/001", "placeholder": "{{reference_number}}"},
-    {"original_text": "Head of Department - CSE", "placeholder": "Head of Department - {{department_name}}"},
-    {"original_text": "Annual Tech Fest 2024", "placeholder": "{{event_name}}"},
-    {"original_text": "50,000", "placeholder": "{{amount}}"},
-    {"original_text": "Seminar Hall - Block A", "placeholder": "{{venue}}"}
-  ]
-}
-
-## WHAT TO REPLACE
-Replace these kinds of values:
-- Person names (Dr. K. Ramesh Babu → {{recipient_name}})
-- Dates (12/03/2024 → {{date}})
-- Reference numbers (Ref. No. NMAMIT/CSE/2024-25/001 → {{reference_number}})
-- Department names when part of a title (CSE → {{department_name}})
-- Event names (Annual Tech Fest 2024 → {{event_name}})
-- Money amounts (₹50,000 → {{amount}})
-- Venue / location names (Seminar Hall → {{venue}})
-- Specific quantities and counts
-- The main body paragraph(s) between salutation and closing → {{letter_body}}
-
-For TABLE chunks:
-- Replace specific data values in cells (amounts, names, items)
-- Do NOT replace column header labels (like "Sl. No.", "Item", "Amount")
-- Do NOT replace row numbers (1, 2, 3...)
-
-## WHAT TO NEVER REPLACE
-Never replace any of these:
-- "Through," / "To:" / "From:" / "Subject:" / "Date:" / "Ref. No.:"
-- "Respected Sir," / "Respected Madam,"
-- "Yours sincerely," / "Yours faithfully,"
-- "The Principal" / "The Head of Department"
-- Table column headers
-- Generic greetings or closing formulas
-
-## RULES
-1. original_text MUST be an exact substring of the input text.
-2. Use descriptive snake_case names inside {{ and }}.
-3. Every item MUST have both "original_text" and "placeholder" keys.
-4. Output ONLY valid JSON. No markdown. No commentary.
-"""
-
-
-def _build_chunked_replacement_payload(chunks_text: str) -> dict:
-    """Build the Ollama /api/chat request for chunked replacement extraction."""
-    return {
-        "model": _OLLAMA_MODEL,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": _CHUNKED_REPLACEMENT_SYSTEM_PROMPT},
-            {"role": "user", "content": chunks_text[:12000]},
-        ],
-        "format": "json",
-    }
-
-
-async def identify_template_replacements_chunked(
-    document_tab: dict,
-) -> list[TemplateReplacement]:
-    """Chunk a raw Google Docs ``documentTab`` and extract template replacements.
-
-    Unlike :func:`identify_template_replacements` which operates on plain
-    text, this function preserves document structure by converting the raw
-    API JSON into labelled chunks (paragraphs, tables, headers, footers)
-    before sending them to the LLM.  This yields much better results with
-    small models like Qwen 7B that struggle to infer structure from flat
-    text.
-
-    Args:
-        document_tab: The ``tab["documentTab"]`` portion of a Docs API
-            response (fetched with ``includeTabsContent=True``).
-
-    Returns:
-        A list of :class:`TemplateReplacement` pairs ready for
-        ``replaceAllText`` via the Docs API.
-    """
-    chunks = chunk_document(document_tab)
-    if not chunks:
-        return []
-
-    chunks_text = chunks_to_prompt_text(chunks)
-    print(f"    📦 Chunked document into {len(chunks)} chunks "
-          f"({len(chunks_text)} chars)")
-
-    async with httpx.AsyncClient(timeout=260) as client:
-        resp = await client.post(
-            f"{settings.ollama_base_url}/api/chat",
-            json=_build_chunked_replacement_payload(chunks_text),
-        )
-        resp.raise_for_status()
-        raw = resp.json()["message"]["content"]
-
-    return _parse_replacements(raw)
-

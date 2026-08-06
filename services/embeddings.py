@@ -1,14 +1,11 @@
-import httpx
+
 
 from config import settings
+from services.ollama_client import call_ollama_api
 
 
 async def embed_text(text: str) -> list[float]:
     """Embed text with the local Ollama embedding model (768-dim vector)."""
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{settings.ollama_base_url}/api/embed",
-            json={"model": settings.embedding_model, "input": text[:8000]},
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
+    payload = {"model": settings.embedding_model, "input": text[:8000]}
+    resp_data = await call_ollama_api("/api/embed", payload, timeout=60)
+    return resp_data["embeddings"][0]
