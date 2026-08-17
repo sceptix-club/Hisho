@@ -11,9 +11,9 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 
 from config import settings
-from services.pipeline.components.gdoc_parser import GoogleDocJsonParser
-from services.pipeline.components.legacy_sync import LegacyTableSync
-from services.pipeline.components.llm_extract import LetterMetadataExtractor
+from services.pipeline.pipeline_components.gdoc_parser import GoogleDocJsonParser
+from services.pipeline.pipeline_components.legacy_sync import LegacyTableSync
+from services.pipeline.pipeline_components.llm_extract import LetterMetadataExtractor
 
 logger = logging.getLogger(__name__)
 
