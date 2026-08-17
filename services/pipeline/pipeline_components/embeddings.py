@@ -4,7 +4,6 @@ Uses LlamaIndex's ``OllamaEmbedding`` and ``TextNode`` to generate
 768-dim vectors — replacing the previous raw ``/api/embed`` HTTP calls.
 """
 
-import asyncio
 
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.core.schema import TextNode

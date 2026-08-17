@@ -11,9 +11,9 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 
 from config import settings
-from services.pipeline.gdoc_parser import GoogleDocJsonParser
-from services.pipeline.legacy_sync import LegacyTableSync
-from services.llm_extract import LetterMetadataExtractor
+from services.pipeline.components.gdoc_parser import GoogleDocJsonParser
+from services.pipeline.components.legacy_sync import LegacyTableSync
+from services.pipeline.components.llm_extract import LetterMetadataExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def build_pipeline() -> IngestionPipeline:
     
     Components (in execution order):
     1. GoogleDocJsonParser: Converts raw JSON to Markdown.
-    2. LetterMetadataExtractor: Uses Qwen 7B to extract structured data,
+    2. LetterMetadataExtractor: Uses the configured extraction model to extract structured data,
        populates node.metadata, and rewrites node.text to description.
     3. LegacyTableSync: Syncs to Signature, Designation, and LetterTypeMemory
        tables (generates description-based embeddings for LetterTypeMemory).

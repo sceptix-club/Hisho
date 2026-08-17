@@ -184,6 +184,10 @@ def _sync_to_legacy_tables(
         # 3. Signatures
         signatures = meta.get("signatures", [])
         source_doc_id = meta.get("source_doc_id", "")
+        logger.info(
+            "LegacyTableSync: node %d has %d signature entries: %s",
+            i, len(signatures), signatures,
+        )
         if signatures:
             for sig in signatures:
                 if sig.get("url"):
@@ -194,6 +198,10 @@ def _sync_to_legacy_tables(
                             image_url=sig["url"],
                             name=sig.get("name"),
                         )
+                    )
+                else:
+                    logger.warning(
+                        "LegacyTableSync: signature entry has no url: %s", sig
                     )
 
     return added, designations_added

@@ -1,14 +1,14 @@
-"""Extract structured letter metadata via the local Ollama chat model.
+"""Extract structured letter metadata via a local Ollama model.
 
-Provides both:
+Provides:
 - ``LetterMetadataExtractor``: A LlamaIndex ``BaseExtractor`` subclass for use
-  inside an ``IngestionPipeline``.  Runs structured extraction using Qwen 7B via
-  ``LLMTextCompletionProgram``, populates ``node.metadata`` with the extraction
-  output, and **rewrites** ``node.text`` to contain only the generalized
-  description so that downstream embeddings capture the concept — not document-
-  specific names or dates.
+  inside an ``IngestionPipeline``.  Runs structured extraction via
+  ``LLMTextCompletionProgram`` using the model specified by ``EXTRACTION_MODEL``,
+  populates ``node.metadata`` with the extraction output, and **rewrites**
+  ``node.text`` to contain only the generalized description so that downstream
+  embeddings capture the concept — not document-specific names or dates.
 - Pydantic schemas: ``LetterExtractionOutput``, ``ApprovalStep``, ``TableInfo``,
-  ``SignatureInfo`` — unchanged from the previous implementation.
+  ``SignatureInfo``.
 """
 
 from __future__ import annotations
@@ -29,11 +29,9 @@ from services.constants.letter_types import format_letter_types_block
 
 logger = logging.getLogger(__name__)
 
-_OLLAMA_MODEL = settings.letter_model.removeprefix("ollama_chat/")
+_OLLAMA_MODEL = settings.extraction_model
 
-# Maximum number of retries when the LLM returns malformed JSON
 _MAX_RETRIES = 3
-# Initial backoff in seconds (doubles on each retry)
 _INITIAL_BACKOFF = 1.0
 
 
@@ -149,8 +147,6 @@ Document to analyze:
 
 """
 
-# Inject the letter type categories at import time, leaving {letter_markdown}
-# as a template placeholder for LLMTextCompletionProgram to fill per call.
 _SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.format(
     letter_types=format_letter_types_block(),
     letter_markdown="{letter_markdown}",
@@ -178,7 +174,7 @@ _extraction_program = LLMTextCompletionProgram.from_defaults(
 
 
 class LetterMetadataExtractor(BaseExtractor):
-    """LlamaIndex ``BaseExtractor`` that runs Qwen 7B structured extraction.
+    """LlamaIndex ``BaseExtractor`` that runs Ollama structured extraction.
 
     For each node:
     1. Sends the node's Markdown text to ``LLMTextCompletionProgram``.
@@ -234,7 +230,6 @@ class LetterMetadataExtractor(BaseExtractor):
                     ],
                 }
             )
-            print(metadata_list[-1]['approval_chain'])
 
         return metadata_list
 
