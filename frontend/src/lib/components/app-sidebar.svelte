@@ -44,11 +44,13 @@
 			},
 			{
 				title: 'DataStore',
-				url: '#',
+				url: '/datastore',
 				icon: Database,
 				items: [
-					{ title: 'Officials', url: '#' },
-					{ title: 'Letters', url: '#' }
+					{ title: 'Letter Nodes', url: '/datastore' },
+					{ title: 'Signatures', url: '/datastore' },
+					{ title: 'Letter Type Memory', url: '/datastore' },
+					{ title: 'Designations', url: '/datastore' }
 				]
 			},
 			{

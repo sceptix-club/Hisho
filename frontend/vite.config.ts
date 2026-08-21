@@ -10,6 +10,10 @@ export default defineConfig({
 			'/auth': {
 				target: 'http://localhost:8000',
 				changeOrigin: true
+			},
+			'/datastore': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
 			}
 		}
 	},

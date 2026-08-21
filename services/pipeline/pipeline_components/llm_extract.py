@@ -29,7 +29,7 @@ from services.constants.letter_types import format_letter_types_block
 
 logger = logging.getLogger(__name__)
 
-_OLLAMA_MODEL = settings.extraction_model
+_OLLAMA_MODEL = settings.extraction_model.removeprefix("ollama_chat/")
 
 _MAX_RETRIES = 3
 _INITIAL_BACKOFF = 1.0

@@ -17,6 +17,7 @@ from api.routes.letter_types import router as letter_types_router
 from api.routes.letters import router as letters_router
 from api.routes.officials import router as officials_router
 from api.routes.datastore.ingetion_route import router as ingestion_router
+from api.routes.datastore.data_routes import router as datastore_router
 from api.schemas.hisho import ChatRequest
 from db.session import AsyncSessionLocal
 import json
@@ -61,6 +62,7 @@ app.include_router(letters_router)
 app.include_router(officials_router)
 app.include_router(letter_types_router)
 app.include_router(ingestion_router)
+app.include_router(datastore_router)
 
 
 @app.get("/")
