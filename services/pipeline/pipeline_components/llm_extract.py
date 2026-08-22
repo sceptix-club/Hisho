@@ -159,6 +159,8 @@ _llm = Ollama(
     model=_OLLAMA_MODEL,
     base_url=settings.ollama_base_url,
     request_timeout=120.0,
+    temperature=0.0,
+    thinking=False,
     json_mode=True,
 )
 
@@ -340,22 +342,3 @@ class LetterMetadataExtractor(BaseExtractor):
             resolved.append(SignatureInfo(url=url, name=sig.name))
 
         return resolved
-
-
-# ── Standalone helper (preserved for non-pipeline callers) ────────────────
-
-async def extract_letter_metadata(payload_json: str) -> LetterExtractionOutput:
-    """Send letter JSON payload to Ollama and return validated extraction.
-
-    Uses LlamaIndex's LLMTextCompletionProgram which internally:
-    1. Injects the LetterExtractionOutput JSON schema into the prompt.
-    2. Invokes the Ollama model.
-    3. Parses and validates the response into a typed Pydantic object.
-
-    .. deprecated::
-        Prefer using ``LetterMetadataExtractor`` inside an ``IngestionPipeline``.
-        This function is kept for backward compatibility with non-pipeline callers.
-    """
-    return await asyncio.to_thread(
-        _extraction_program, letter_markdown=payload_json[:12000]
-    )

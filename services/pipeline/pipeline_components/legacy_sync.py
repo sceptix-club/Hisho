@@ -1,6 +1,5 @@
 """TransformComponent that syncs ingested nodes to legacy SQLAlchemy tables.
 
-Replaces the manual sync block previously in ``scripts/ingest_letters.py``.
 Handles three tables: ``LetterTypeMemory``, ``Designation``, and ``Signature``.
 
 The ``LetterTypeMemory`` embedding is generated from the node's ``description``
@@ -14,12 +13,11 @@ import uuid
 from typing import Sequence
 
 from llama_index.core.schema import BaseNode, TransformComponent
-from llama_index.embeddings.ollama import OllamaEmbedding
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from db.models import Designation, LetterTypeMemory, Signature
+from services.pipeline.pipeline_components.embed_model import get_embed_model
 from db.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -39,8 +37,7 @@ class LegacyTableSync(TransformComponent):
     """
 
     def __call__(self, nodes: Sequence[BaseNode], **kwargs) -> Sequence[BaseNode]:
-        # Synchronous fallback — should not normally be used since the pipeline
-        # calls ``acall``, but we raise to surface misuse.
+        # Sync requires an async DB session; the pipeline must run via arun()/acall().
         raise NotImplementedError(
             "LegacyTableSync requires async execution. Use acall() or run "
             "the pipeline with arun()."
@@ -87,10 +84,7 @@ class LegacyTableSync(TransformComponent):
         Returns a list aligned with ``nodes`` — one embedding per node, or
         ``None`` when description is empty / extraction failed.
         """
-        embed_model = OllamaEmbedding(
-            model_name=settings.embedding_model,
-            base_url=settings.ollama_base_url,
-        )
+        embed_model = get_embed_model()
 
         descriptions: list[str] = []
         indices_with_desc: list[int] = []
@@ -184,10 +178,6 @@ def _sync_to_legacy_tables(
         # 3. Signatures
         signatures = meta.get("signatures", [])
         source_doc_id = meta.get("source_doc_id", "")
-        logger.info(
-            "LegacyTableSync: node %d has %d signature entries: %s",
-            i, len(signatures), signatures,
-        )
         if signatures:
             for sig in signatures:
                 if sig.get("url"):

@@ -153,9 +153,9 @@ class GoogleDocJsonParser(NodeParser):
 
     @staticmethod
     def _is_likely_signature(image_idx: int, elements: list[dict]) -> bool:
-        """Heuristic: an image is likely a signature if it appears in the bottom half
-        of the document or is in close proximity to, or in a document containing,
-        signature-indicator words."""
+        """Heuristic: an image is likely a signature if it appears in the bottom
+        half of the document, or anywhere in a document containing
+        signature-indicator keywords."""
         total = len(elements)
         # Located in the bottom half of the document/payload
         if image_idx >= total * 0.5:
