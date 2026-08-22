@@ -21,12 +21,14 @@ from api.schemas.auth import (
 from config import settings
 from db.models import User
 from db.session import get_db
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer(auto_error=False)
+
+REFRESH_COOKIE_NAME = "refresh_token"
 
 GOOGLE_SCOPES = [
     "openid",
@@ -60,9 +62,32 @@ async def _get_google_public_key(kid: str):
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=7))
-    to_encode.update({"exp": expire, "auth_method": "google"})
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
+    )
+    to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, settings.jwt_auth_secret, algorithm="HS256")
+
+
+def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(days=settings.refresh_token_expire_days)
+    )
+    to_encode.update({"exp": expire, "type": "refresh"})
+    return jwt.encode(to_encode, settings.jwt_auth_secret, algorithm="HS256")
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.frontend_url.startswith("https"),
+        samesite="lax",
+        path="/auth",
+    )
 
 
 async def get_current_user(
@@ -88,6 +113,8 @@ async def get_current_user(
 
     try:
         payload = jwt.decode(token, settings.jwt_auth_secret, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
         user_id = payload.get("sub")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -236,11 +263,60 @@ async def google_callback(
     await db.refresh(user)
 
     jwt_token = create_access_token({"sub": user.id})
+    refresh_token = create_refresh_token({"sub": user.id})
 
-    return RedirectResponse(
+    response = RedirectResponse(
         url=f"{settings.frontend_url}/oauth/callback#token={jwt_token}",
         status_code=302,
     )
+    _set_refresh_cookie(response, refresh_token)
+    return response
+
+
+@router.post("/refresh")
+async def refresh_token(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=401, detail="No refresh token")
+
+    try:
+        payload = jwt.decode(token, settings.jwt_auth_secret, algorithms=["HS256"])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or user.deleted:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    access_token = create_access_token({"sub": user.id})
+    new_refresh_token = create_refresh_token({"sub": user.id})
+
+    response = JSONResponse(
+        {"token_type": "bearer", "access_token": access_token},
+        status_code=200,
+    )
+    _set_refresh_cookie(response, new_refresh_token)
+    return response
+
+
+@router.post("/logout")
+async def logout():
+    response = JSONResponse({"detail": "Logged out"}, status_code=200)
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/auth")
+    return response
 
 
 @router.get("/me", response_model=UserResponse)
@@ -254,12 +330,6 @@ async def get_me(
         avatar_url=current_user.avatar_url,
         role=current_user.role,
     )
-
-
-@router.post("/logout")
-async def logout(response: Response):
-    response.delete_cookie(key="access_token", path="/")
-    return {"message": "Logged out"}
 
 
 async def ensure_admin_user(db: AsyncSession):

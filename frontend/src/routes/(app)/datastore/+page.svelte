@@ -1,5 +1,14 @@
 <script lang="ts">
-	import { Database, FileSignature, BookType, BadgeCheck, Loader2, AlertCircle, RefreshCw } from '@lucide/svelte';
+	import {
+		Database,
+		FileSignature,
+		BookType,
+		BadgeCheck,
+		Loader2,
+		AlertCircle,
+		RefreshCw
+	} from '@lucide/svelte';
+	import { api } from '$lib/api';
 
 	type Tab = 'letter-nodes' | 'signatures' | 'letter-type-memory' | 'designations';
 
@@ -22,11 +31,8 @@
 	async function fetchData(tab: Tab) {
 		loading = true;
 		error = null;
-		const token = localStorage.getItem('access_token');
 		try {
-			const res = await fetch(`/datastore/${tab}`, {
-				headers: token ? { Authorization: `Bearer ${token}` } : {}
-			});
+			const res = await api(`/datastore/${tab}`);
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ detail: `Error ${res.status}` }));
 				throw new Error(err.detail || `Request failed with status ${res.status}`);
@@ -98,9 +104,7 @@
 	<div class="border-b border-border bg-card/50 px-6 py-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-3">
-				<div
-					class="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary"
-				>
+				<div class="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
 					<Database class="size-5" />
 				</div>
 				<div>
@@ -201,7 +205,8 @@
 									<td class="px-4 py-3 text-muted-foreground">
 										<button
 											class="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-											onclick={() => navigator.clipboard.writeText(JSON.stringify(node.metadata_, null, 2))}
+											onclick={() =>
+												navigator.clipboard.writeText(JSON.stringify(node.metadata_, null, 2))}
 										>
 											Copy JSON
 										</button>
@@ -273,8 +278,7 @@
 								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Letter Type</th>
 								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Domain</th>
 								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Description</th>
-								<th class="px-4 py-3 text-left font-medium text-muted-foreground"
-									>Approval Chain</th
+								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Approval Chain</th
 								>
 								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Template</th>
 								<th class="px-4 py-3 text-left font-medium text-muted-foreground">Created</th>
@@ -299,7 +303,9 @@
 										>
 									</td>
 									<td class="px-4 py-3 text-xs text-muted-foreground">
-										{ltm.approval_chain?.length || 0} step{(ltm.approval_chain?.length || 0) !== 1 ? 's' : ''}
+										{ltm.approval_chain?.length || 0} step{(ltm.approval_chain?.length || 0) !== 1
+											? 's'
+											: ''}
 									</td>
 									<td class="px-4 py-3">
 										{#if ltm.template_url}

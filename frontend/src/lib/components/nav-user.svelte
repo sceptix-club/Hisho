@@ -12,6 +12,7 @@
 	import { useSidebar } from '$lib/components/ui/sidebar/index.js';
 
 	import type { User } from '$lib/types/user';
+	import { auth } from '$lib/stores/auth.svelte';
 
 	let {
 		user
@@ -85,7 +86,7 @@
 					</DropdownMenu.Item>
 				</DropdownMenu.Group>
 				<DropdownMenu.Separator />
-				<DropdownMenu.Item>
+				<DropdownMenu.Item onclick={() => auth.logout()}>
 					<LogOutIcon />
 					Log out
 				</DropdownMenu.Item>

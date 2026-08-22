@@ -1,4 +1,5 @@
 import type { User } from '$lib/types/user';
+import { api, clearTokens } from '$lib/api';
 
 let user = $state<User | null>(null);
 let loading = $state(true);
@@ -20,9 +21,7 @@ export const auth = {
 			return;
 		}
 		try {
-			const res = await fetch('/auth/me', {
-				headers: { Authorization: `Bearer ${token}` }
-			});
+			const res = await api('/auth/me');
 			if (!res.ok) throw new Error('Not authenticated');
 			user = await res.json();
 		} catch {
@@ -30,5 +29,15 @@ export const auth = {
 		} finally {
 			loading = false;
 		}
+	},
+	async logout() {
+		try {
+			await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+		} catch {
+			// ignore network errors, clear local state regardless
+		}
+		clearTokens();
+		user = null;
+		window.location.assign('/login');
 	}
 };

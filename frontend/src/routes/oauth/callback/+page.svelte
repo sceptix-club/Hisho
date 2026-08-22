@@ -4,7 +4,7 @@
 
 	onMount(() => {
 		const hash = window.location.hash;
-		const token = hash.replace(/^#token=/, '');
+		const token = hash.replace(/^#token=/, '').split('&')[0];
 		if (token) {
 			localStorage.setItem('access_token', token);
 		}

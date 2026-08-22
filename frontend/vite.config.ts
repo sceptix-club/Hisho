@@ -14,6 +14,14 @@ export default defineConfig({
 			'/datastore': {
 				target: 'http://localhost:8000',
 				changeOrigin: true
+			},
+			'/sessions': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
+			},
+			'/chat': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
 			}
 		}
 	},

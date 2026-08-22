@@ -4,6 +4,7 @@
 	import Input from '$lib/components/ui/input/input.svelte';
 	import { Upload, Loader2, CheckCircle, AlertCircle, FileText } from '@lucide/svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
+	import { api } from '$lib/api';
 
 	let open = $state(false);
 	let docId = $state('');
@@ -21,19 +22,11 @@
 		ingesting = true;
 		result = null;
 
-		const token = localStorage.getItem('access_token');
-		if (!token) {
-			result = { status: 'error', message: 'You must be logged in to ingest documents.' };
-			ingesting = false;
-			return;
-		}
-
 		try {
-			const res = await fetch('http://localhost:8000/datastore/ingest', {
+			const res = await api('/datastore/ingest', {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`
+					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({ doc_id: docId.trim() })
 			});
@@ -75,10 +68,7 @@
 
 <Sheet.Root bind:open>
 	<Sidebar.MenuItem>
-		<Sidebar.MenuButton
-			tooltipContent="Ingest Document"
-			onclick={() => (open = true)}
-		>
+		<Sidebar.MenuButton tooltipContent="Ingest Document" onclick={() => (open = true)}>
 			<Upload class="size-4" />
 			<span>Ingest Document</span>
 		</Sidebar.MenuButton>
@@ -114,11 +104,7 @@
 				{/if}
 			</div>
 
-			<Button
-				onclick={handleIngest}
-				disabled={!docId.trim() || ingesting}
-				class="w-full"
-			>
+			<Button onclick={handleIngest} disabled={!docId.trim() || ingesting} class="w-full">
 				{#if ingesting}
 					<Loader2 class="size-4 mr-2 animate-spin" />
 					Ingesting...
