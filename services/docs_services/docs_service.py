@@ -6,8 +6,67 @@ class GoogleDocsService:
     def __init__(self, settings: Settings, access_token: str, refresh_token: str):
         self._client = GoogleUserClient(settings, access_token, refresh_token)
 
-    def fetch_document(self, document_id: str) -> dict:
-        return self._client.service.documents().get(documentId=document_id).execute()
+    def fetch_document(self, document_id: str, include_tabs: bool = False) -> dict:
+        return (
+            self._client.service.documents()
+            .get(documentId=document_id, includeTabsContent=include_tabs)
+            .execute()
+        )
+
+    @staticmethod
+    def extract_text(doc: dict) -> str:
+        """Flatten a Docs API document body into plain text.
+
+        Tables are rendered as 'cell | cell' lines - a shape the drafting
+        model can reproduce through the plain-text insertText output path.
+        """
+        return GoogleDocsService._extract_content(
+            doc.get("body", {}).get("content", [])
+        ).strip()
+
+    @staticmethod
+    def _extract_content(content: list) -> str:
+        parts: list[str] = []
+        for item in content:
+            if "paragraph" in item:
+                for el in item["paragraph"].get("elements", []):
+                    parts.append(el.get("textRun", {}).get("content", ""))
+            elif "table" in item:
+                for row in item["table"].get("tableRows", []):
+                    cells = [
+                        GoogleDocsService._extract_content(
+                            cell.get("content", [])
+                        ).strip()
+                        for cell in row.get("tableCells", [])
+                    ]
+                    parts.append(" | ".join(cells) + "\n")
+            elif "tableOfContents" in item:
+                parts.append(
+                    GoogleDocsService._extract_content(
+                        item["tableOfContents"].get("content", [])
+                    )
+                )
+        return "".join(parts)
+
+    @staticmethod
+    def extract_inline_image_urls(doc: dict) -> list[str]:
+        """Extract all inline image URLs (contentUri) from the document."""
+        urls = []
+        inline_objects = doc.get("inlineObjects", {})
+        for obj_id, obj_data in inline_objects.items():
+            try:
+                uri = (
+                    obj_data.get("inlineObjectProperties", {})
+                    .get("embeddedObject", {})
+                    .get("imageProperties", {})
+                    .get("contentUri")
+                )
+                if uri:
+                    urls.append(uri)
+            except Exception:
+                continue
+        return urls
+
 
     def create_document(self, title: str, content: str) -> dict:
         file = self._client.drive_service.files().create(

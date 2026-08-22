@@ -31,3 +31,31 @@ class LetterValidationChecker(BaseAgent):
                 author=self.name,
                 content=Content(parts=[Part(text=feedback)]),
             )
+
+
+class EmailValidationChecker(BaseAgent):
+    async def _run_async_impl(
+        self, context: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
+
+        email = context.session.state.get("email", "")
+
+        required_sections = ["Subject", "Dear", "Regards"]
+        missing = [s for s in required_sections if s not in email]
+
+        if not missing:
+            yield Event(
+                author=self.name,
+                content=Content(
+                    parts=[Part(text="Validation successful. All sections present.")]
+                ),
+                actions=EventActions(escalate=True),
+            )
+        else:
+            feedback = f"Missing sections: {', '.join(missing)}. Please rewrite the email including these."
+            context.session.state["feedback"] = feedback
+
+            yield Event(
+                author=self.name,
+                content=Content(parts=[Part(text=feedback)]),
+            )
