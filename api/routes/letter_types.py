@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from db.models import LetterType
 from db.session import get_db
+from api.routes.auth import get_current_user
 from api.schemas.letter_types import (
     LetterTypeCreate,
     LetterTypeUpdate,
@@ -13,14 +14,19 @@ from api.schemas.letter_types import (
 router = APIRouter(prefix="/letter-types", tags=["letter-types"])
 
 
+@router.get("", response_model=list[LetterTypeResponse], include_in_schema=False)
 @router.get("/", response_model=list[LetterTypeResponse])
-async def list_letter_types(db: AsyncSession = Depends(get_db)):
+async def list_letter_types(
+    db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(select(LetterType))
     return result.scalars().all()
 
 
 @router.get("/{letter_type_id}", response_model=LetterTypeResponse)
-async def get_letter_type(letter_type_id: str, db: AsyncSession = Depends(get_db)):
+async def get_letter_type(
+    letter_type_id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(select(LetterType).where(LetterType.id == letter_type_id))
     letter_type = result.scalar_one_or_none()
     if not letter_type:
@@ -31,10 +37,13 @@ async def get_letter_type(letter_type_id: str, db: AsyncSession = Depends(get_db
 
 
 @router.post(
+    "", response_model=LetterTypeResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False
+)
+@router.post(
     "/", response_model=LetterTypeResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_letter_type(
-    body: LetterTypeCreate, db: AsyncSession = Depends(get_db)
+    body: LetterTypeCreate, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
 ):
     letter_type = LetterType(
         id=body.id,
@@ -54,6 +63,7 @@ async def update_letter_type(
     letter_type_id: str,
     body: LetterTypeUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     result = await db.execute(select(LetterType).where(LetterType.id == letter_type_id))
     letter_type = result.scalar_one_or_none()
@@ -75,7 +85,9 @@ async def update_letter_type(
 
 
 @router.delete("/{letter_type_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_letter_type(letter_type_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_letter_type(
+    letter_type_id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(select(LetterType).where(LetterType.id == letter_type_id))
     letter_type = result.scalar_one_or_none()
     if not letter_type:

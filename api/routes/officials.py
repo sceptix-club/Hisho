@@ -5,19 +5,25 @@ from sqlalchemy import select
 
 from db.models import Official
 from db.session import get_db
+from api.routes.auth import get_current_user
 from api.schemas.officials import OfficialCreate, OfficialUpdate, OfficialResponse
 
 router = APIRouter(prefix="/officials", tags=["officials"])
 
 
+@router.get("", response_model=list[OfficialResponse], include_in_schema=False)
 @router.get("/", response_model=list[OfficialResponse])
-async def list_officials(db: AsyncSession = Depends(get_db)):
+async def list_officials(
+    db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(select(Official).where(Official.deleted.is_(False)))
     return result.scalars().all()
 
 
 @router.get("/{official_id}", response_model=OfficialResponse)
-async def get_official(official_id: str, db: AsyncSession = Depends(get_db)):
+async def get_official(
+    official_id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(
         select(Official).where(
             Official.id == official_id,
@@ -32,8 +38,11 @@ async def get_official(official_id: str, db: AsyncSession = Depends(get_db)):
     return official
 
 
+@router.post("", response_model=OfficialResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 @router.post("/", response_model=OfficialResponse, status_code=status.HTTP_201_CREATED)
-async def create_official(body: OfficialCreate, db: AsyncSession = Depends(get_db)):
+async def create_official(
+    body: OfficialCreate, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     official = Official(
         id=str(uuid4()),
         name=body.name,
@@ -50,7 +59,10 @@ async def create_official(body: OfficialCreate, db: AsyncSession = Depends(get_d
 
 @router.put("/{official_id}", response_model=OfficialResponse)
 async def update_official(
-    official_id: str, body: OfficialUpdate, db: AsyncSession = Depends(get_db)
+    official_id: str,
+    body: OfficialUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
     result = await db.execute(
         select(Official).where(
@@ -73,7 +85,9 @@ async def update_official(
 
 
 @router.delete("/{official_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_official(official_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_official(
+    official_id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+):
     result = await db.execute(
         select(Official).where(
             Official.id == official_id,
