@@ -19,7 +19,19 @@ export default defineConfig({
 				target: 'http://localhost:8000',
 				changeOrigin: true
 			},
-			'/chat': {
+			'/chat/stream': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
+			},
+			'/officials': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
+			},
+			'/letter-types': {
+				target: 'http://localhost:8000',
+				changeOrigin: true
+			},
+			'/letters': {
 				target: 'http://localhost:8000',
 				changeOrigin: true
 			}

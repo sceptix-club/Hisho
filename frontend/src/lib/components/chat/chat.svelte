@@ -6,11 +6,12 @@
 	import { Bubble } from '$lib/components/ui/bubble/index.js';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { SendHorizontal, SquarePen } from '@lucide/svelte';
+	import { SendHorizontal, SquarePen, ExternalLink } from '@lucide/svelte';
 	import { Skeleton } from '../ui/skeleton';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { api } from '$lib/api';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 
 	let input = $state('');
 	let messages = $state<ChatMessage[]>([]);
@@ -18,10 +19,15 @@
 
 	let buf = '';
 	let loadedSession: string | null = null;
+	let resuming = $state(false);
+	let resumeError = $state<string | null>(null);
 
 	function newChat() {
 		messages = [];
 		sessionId = null;
+		loadedSession = null;
+		resumeError = null;
+		goto('/chat');
 	}
 
 	$effect(() => {
@@ -29,17 +35,33 @@
 		if (param && param !== loadedSession) {
 			loadedSession = param;
 			resumeSession(param);
+		} else if (!param && loadedSession !== null) {
+			messages = [];
+			sessionId = null;
+			loadedSession = null;
+			resumeError = null;
 		}
 	});
 
 	async function resumeSession(id: string) {
-		await auth.load();
-		const uid = auth.user?.id ?? 'default';
-		const res = await api(`/sessions/${id}?user_id=${uid}`);
-		if (!res.ok) return;
-		const data = await res.json();
-		messages = data.messages;
-		sessionId = data.id;
+		resuming = true;
+		resumeError = null;
+		try {
+			await auth.load();
+			const uid = auth.user?.id ?? 'default';
+			const res = await api(`/sessions/${id}?user_id=${uid}`);
+			if (!res.ok) throw new Error(`Failed to load conversation (${res.status}).`);
+			const data = await res.json();
+			messages = Array.isArray(data.messages) ? data.messages : [];
+			sessionId = data.id ?? id;
+		} catch (e) {
+			messages = [];
+			sessionId = null;
+			resumeError = e instanceof Error ? e.message : 'Could not load this conversation.';
+			// Keep `loadedSession` set so the Retry button can re-run resumeSession.
+		} finally {
+			resuming = false;
+		}
 	}
 
 	async function send() {
@@ -47,6 +69,7 @@
 
 		const query = input;
 		input = '';
+		buf = '';
 
 		messages.push({
 			role: 'user',
@@ -61,63 +84,99 @@
 			text: '',
 			thought: '',
 			tool_calls: [],
-			status: 'streaming'
+			status: 'streaming',
+			docUrl: undefined
 		});
 		const reply = messages[messages.length - 1];
 
-		const res = await api('/chat/stream', {
-			method: 'POST',
-			body: JSON.stringify({
-				query,
-				user_id: auth.user?.id ?? 'default',
-				session_id: sessionId
-			}),
-			headers: { 'Content-Type': 'application/json' }
-		});
+		let res: Response;
+		try {
+			res = await api('/chat/stream', {
+				method: 'POST',
+				body: JSON.stringify({
+					query,
+					user_id: auth.user?.id ?? 'default',
+					session_id: sessionId
+				}),
+				headers: { 'Content-Type': 'application/json' }
+			});
+		} catch {
+			reply.text = '⚠ Connection error. Please retry.';
+			reply.status = 'complete';
+			return;
+		}
+
 		if (!res.ok || !res.body) {
+			reply.text = `⚠ Request failed (${res.status}). Please retry.`;
 			reply.status = 'complete';
 			return;
 		}
 
 		const reader = res.body.getReader();
 		const dec = new TextDecoder();
+		let doneReceived = false;
 
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buf += dec.decode(value, { stream: true });
-			const parts = buf.split('\n\n');
-			buf = parts.pop() || '';
-			for (const part of parts) {
-				if (!part) continue;
-				for (const line of part.split('\n')) {
-					if (!line.startsWith('data: ')) continue;
-					try {
-						const data = JSON.parse(line.slice(6)) as ChatStream;
-						if (data.type === 'delta') {
-							reply.text += data.text;
-						} else if (data.type === 'message') {
-							const final_status = JSON.parse(data.text).final_status;
-							reply.text = final_status;
-						} else if (data.type === 'thought') {
-							reply.thought += data.text;
-						} else if (data.type === 'tool_call') {
-							reply.tool_calls.push({ name: data.name, args: data.args });
-						} else if (data.type === 'tool_result') {
-							const tc = reply.tool_calls.find(
-								(t) => t.name === data.name && t.result === undefined
-							);
-							if (tc) tc.result = data.result;
-							else reply.tool_calls.push({ name: data.name, result: data.result });
-						} else if (data.type === 'done') {
-							sessionId = data.session_id;
-							reply.status = 'complete';
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				buf += dec.decode(value, { stream: true });
+				const parts = buf.split('\n\n');
+				buf = parts.pop() || '';
+				for (const part of parts) {
+					if (!part) continue;
+					for (const line of part.split('\n')) {
+						if (!line.startsWith('data: ')) continue;
+						try {
+							const data = JSON.parse(line.slice(6)) as ChatStream;
+							if (data.type === 'delta') {
+								reply.text += data.text;
+							} else if (data.type === 'message') {
+								try {
+									reply.text = JSON.parse(data.text).final_status;
+								} catch {
+									reply.text = data.text;
+								}
+							} else if (data.type === 'thought') {
+								reply.thought += data.text;
+							} else if (data.type === 'tool_call') {
+								reply.tool_calls.push({ name: data.name, args: data.args });
+							} else if (data.type === 'tool_result') {
+								const tc = reply.tool_calls.find(
+									(t) => t.name === data.name && t.result === undefined
+								);
+								if (tc) tc.result = data.result;
+								else reply.tool_calls.push({ name: data.name, result: data.result });
+								if (data.name === 'sync_letter_to_google_docs' && data.result) {
+									try {
+										const parsed =
+											typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+										if (parsed && parsed.url) reply.docUrl = parsed.url;
+									} catch {
+										// ignore malformed tool result
+									}
+								}
+							} else if (data.type === 'error') {
+								reply.text = `⚠ ${data.text}`;
+								reply.status = 'complete';
+							} else if (data.type === 'done') {
+								sessionId = data.session_id;
+								reply.status = 'complete';
+								doneReceived = true;
+							}
+						} catch {
+							// ignore malformed SSE chunk
 						}
-					} catch {
-						// ignore malformed SSE chunk
 					}
 				}
 			}
+		} catch {
+			if (!doneReceived) {
+				reply.text = reply.text || '⚠ Connection interrupted. Please retry.';
+			}
+		} finally {
+			// Never leave the bubble stuck on the streaming skeleton.
+			if (!doneReceived) reply.status = 'complete';
 		}
 	}
 </script>
@@ -125,65 +184,95 @@
 <div transition:fly class="flex h-full flex-col">
 	<div class="flex-1 min-h-0 overflow-y-auto p-4">
 		<div class="flex flex-col gap-3">
-			{#each messages as msg, i (i)}
-				<div transition:fly={{ y: 10, duration: 250 }}>
-					<Message align={msg.role === 'user' ? 'end' : 'start'}>
-						<div
-							data-slot="message-avatar"
-							class="flex size-8 shrink-0 items-center justify-center self-end overflow-hidden rounded-full bg-muted"
-						>
-							<Avatar size="sm">
-								<AvatarImage
-									src={msg.role === 'user' ? '/goal.gif' : '/hamster.webp'}
-									alt={msg.role === 'user' ? 'you' : 'assistant'}
-								/>
-								<AvatarFallback>{msg.role === 'user' ? 'ME' : 'AI'}</AvatarFallback>
-							</Avatar>
-						</div>
-						<div
-							data-slot="message-content"
-							class={msg.role === 'user'
-								? 'flex w-full min-w-0 flex-col gap-2.5 wrap-break-word items-end'
-								: 'flex w-full min-w-0 flex-col gap-2.5 wrap-break-word items-start'}
-						>
-							{#if msg.role === 'assistant'}
-								{#if msg.thought}
-									<label
-										for="thought-{i}"
-										class="flex items-start gap-1 cursor-pointer text-sm text-gray-400 italic"
-									>
-										<input type="checkbox" id="thought-{i}" class="hidden peer" />
-										<span
-											class="mt-0.5 text-xs transition-transform peer-checked:rotate-180 select-none shrink-0"
-											>...
-										</span>
-										<span
-											class="whitespace-pre-wrap overflow-hidden line-clamp-1 peer-checked:line-clamp-none"
-											>{msg.thought}</span
-										>
-									</label>
-								{/if}
-								{#each msg.tool_calls as tc, ti (ti)}
-									<div class="text-sm text-blue-500 font-mono">🔧 {tc.name}</div>
-								{/each}
-								<Bubble variant="received">
-									<div data-slot="bubble-content" class="whitespace-pre-wrap">
-										{#if !msg.text && msg.status === 'streaming'}
-											<Skeleton class="h-4 w-[250px] bg-muted-foreground/20" />
-										{:else}
-											{msg.text || ''}
-										{/if}
-									</div>
-								</Bubble>
-							{:else}
-								<Bubble variant="sent">
-									<div data-slot="bubble-content">{msg.text}</div>
-								</Bubble>
-							{/if}
-						</div>
-					</Message>
+			{#if resumeError}
+				<div
+					class="mx-auto mt-10 flex max-w-md flex-col items-center gap-3 rounded-md border border-red-500/40 bg-red-500/10 p-4 text-center"
+				>
+					<p class="text-sm text-red-500">⚠ {resumeError}</p>
+					<div class="flex gap-2">
+						<Button type="button" variant="outline" onclick={() => resumeSession(loadedSession!)}>
+							Retry
+						</Button>
+						<Button type="button" variant="ghost" onclick={newChat}>New chat</Button>
+					</div>
 				</div>
-			{/each}
+			{:else if resuming}
+				<div class="flex flex-col gap-3">
+					<Skeleton class="h-16 w-3/4" />
+					<Skeleton class="h-16 w-2/3" />
+				</div>
+			{:else}
+				{#each messages as msg, i (i)}
+					<div transition:fly={{ y: 10, duration: 250 }}>
+						<Message align={msg.role === 'user' ? 'end' : 'start'}>
+							<div
+								data-slot="message-avatar"
+								class="flex size-8 shrink-0 items-center justify-center self-end overflow-hidden rounded-full bg-muted"
+							>
+								<Avatar size="sm">
+									<AvatarImage
+										src={msg.role === 'user' ? '/goal.gif' : '/hamster.webp'}
+										alt={msg.role === 'user' ? 'you' : 'assistant'}
+									/>
+									<AvatarFallback>{msg.role === 'user' ? 'ME' : 'AI'}</AvatarFallback>
+								</Avatar>
+							</div>
+							<div
+								data-slot="message-content"
+								class={msg.role === 'user'
+									? 'flex w-full min-w-0 flex-col gap-2.5 wrap-break-word items-end'
+									: 'flex w-full min-w-0 flex-col gap-2.5 wrap-break-word items-start'}
+							>
+								{#if msg.role === 'assistant'}
+									{#if msg.thought}
+										<label
+											for="thought-{i}"
+											class="flex items-start gap-1 cursor-pointer text-sm text-gray-400 italic"
+										>
+											<input type="checkbox" id="thought-{i}" class="hidden peer" />
+											<span
+												class="mt-0.5 text-xs transition-transform peer-checked:rotate-180 select-none shrink-0"
+												>...
+											</span>
+											<span
+												class="whitespace-pre-wrap overflow-hidden line-clamp-1 peer-checked:line-clamp-none"
+												>{msg.thought}</span
+											>
+										</label>
+									{/if}
+									{#each msg.tool_calls as tc, ti (ti)}
+										<div class="text-sm text-blue-500 font-mono">🔧 {tc.name}</div>
+									{/each}
+									<Bubble variant="received">
+										<div data-slot="bubble-content" class="whitespace-pre-wrap">
+											{#if !msg.text && msg.status === 'streaming'}
+												<Skeleton class="h-4 w-[250px] bg-muted-foreground/20" />
+											{:else}
+												{msg.text || ''}
+											{/if}
+										</div>
+									</Bubble>
+									{#if msg.docUrl}
+										<a
+											href={msg.docUrl}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+										>
+											<ExternalLink class="size-4" />
+											Open in Google Docs
+										</a>
+									{/if}
+								{:else}
+									<Bubble variant="sent">
+										<div data-slot="bubble-content">{msg.text}</div>
+									</Bubble>
+								{/if}
+							</div>
+						</Message>
+					</div>
+				{/each}
+			{/if}
 		</div>
 	</div>
 	<div class="border-t p-10">
