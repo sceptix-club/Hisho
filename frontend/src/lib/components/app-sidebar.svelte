@@ -50,7 +50,9 @@
 					{ title: 'Letter Nodes', url: '/datastore' },
 					{ title: 'Signatures', url: '/datastore' },
 					{ title: 'Letter Type Memory', url: '/datastore' },
-					{ title: 'Designations', url: '/datastore' }
+					{ title: 'Designations', url: '/datastore' },
+					{ title: 'Officials', url: '/datastore/officials' },
+					{ title: 'Letters', url: '/datastore/letters' }
 				]
 			},
 			{

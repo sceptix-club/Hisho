@@ -21,6 +21,7 @@
 	} = $props();
 
 	const sidebar = useSidebar();
+
 </script>
 
 <Sidebar.Menu>
