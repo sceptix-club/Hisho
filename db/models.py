@@ -41,6 +41,24 @@ class Letter(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # --- brief lifecycle fields ---
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_facts: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=""
+    )
+    approval_chain: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=""
+    )
+    style_references: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=""
+    )
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, server_default="pending"
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, nullable=False, server_default="default"
+    )
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
