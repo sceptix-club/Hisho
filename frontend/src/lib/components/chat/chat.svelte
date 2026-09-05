@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
-	import type { ChatStream, ChatMessage } from '$lib/types/chat';
+	import type { ChatMessage } from '$lib/types/chat';
 	import Message from '$lib/components/ui/message/message.svelte';
 	import { Avatar, AvatarImage, AvatarFallback } from '$lib/components/ui/avatar/index';
 	import { Bubble } from '$lib/components/ui/bubble/index.js';
@@ -8,201 +8,49 @@
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { SendHorizontal, SquarePen, ExternalLink } from '@lucide/svelte';
 	import { Skeleton } from '../ui/skeleton';
-	import { auth } from '$lib/stores/auth.svelte';
-	import { api } from '$lib/api';
+	import { session } from '$lib/stores/session.svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
 
 	let input = $state('');
-	let messages = $state<ChatMessage[]>([]);
-	let sessionId = $state<string | null>(null);
-
-	let buf = '';
-	let loadedSession: string | null = null;
-	let resuming = $state(false);
-	let resumeError = $state<string | null>(null);
-
-	function newChat() {
-		messages = [];
-		sessionId = null;
-		loadedSession = null;
-		resumeError = null;
-		goto('/chat');
-	}
 
 	$effect(() => {
 		const param = page.url.searchParams.get('session');
-		if (param && param !== loadedSession) {
-			loadedSession = param;
-			resumeSession(param);
-		} else if (!param && loadedSession !== null) {
-			messages = [];
-			sessionId = null;
-			loadedSession = null;
-			resumeError = null;
-		}
+		session.syncFromUrl(param);
 	});
 
-	async function resumeSession(id: string) {
-		resuming = true;
-		resumeError = null;
-		try {
-			await auth.load();
-			const uid = auth.user?.id ?? 'default';
-			const res = await api(`/sessions/${id}?user_id=${uid}`);
-			if (!res.ok) throw new Error(`Failed to load conversation (${res.status}).`);
-			const data = await res.json();
-			messages = Array.isArray(data.messages) ? data.messages : [];
-			sessionId = data.id ?? id;
-		} catch (e) {
-			messages = [];
-			sessionId = null;
-			resumeError = e instanceof Error ? e.message : 'Could not load this conversation.';
-			// Keep `loadedSession` set so the Retry button can re-run resumeSession.
-		} finally {
-			resuming = false;
-		}
+	async function handleSend(e: Event) {
+		e.preventDefault();
+		if (!input.trim() || session.sending) return;
+		const q = input;
+		input = '';
+		await session.send(q);
 	}
 
-	async function send() {
-		if (!input) return;
-
-		const query = input;
-		input = '';
-		buf = '';
-
-		messages.push({
-			role: 'user',
-			text: query,
-			thought: '',
-			tool_calls: [],
-			status: 'complete'
-		});
-
-		messages.push({
-			role: 'assistant',
-			text: '',
-			thought: '',
-			tool_calls: [],
-			status: 'streaming',
-			docUrl: undefined
-		});
-		const reply = messages[messages.length - 1];
-
-		let res: Response;
-		try {
-			res = await api('/chat/stream', {
-				method: 'POST',
-				body: JSON.stringify({
-					query,
-					user_id: auth.user?.id ?? 'default',
-					session_id: sessionId
-				}),
-				headers: { 'Content-Type': 'application/json' }
-			});
-		} catch {
-			reply.text = '⚠ Connection error. Please retry.';
-			reply.status = 'complete';
-			return;
-		}
-
-		if (!res.ok || !res.body) {
-			reply.text = `⚠ Request failed (${res.status}). Please retry.`;
-			reply.status = 'complete';
-			return;
-		}
-
-		const reader = res.body.getReader();
-		const dec = new TextDecoder();
-		let doneReceived = false;
-
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				const parts = buf.split('\n\n');
-				buf = parts.pop() || '';
-				for (const part of parts) {
-					if (!part) continue;
-					for (const line of part.split('\n')) {
-						if (!line.startsWith('data: ')) continue;
-						try {
-							const data = JSON.parse(line.slice(6)) as ChatStream;
-							if (data.type === 'delta') {
-								reply.text += data.text;
-							} else if (data.type === 'message') {
-								try {
-									reply.text = JSON.parse(data.text).final_status;
-								} catch {
-									reply.text = data.text;
-								}
-							} else if (data.type === 'thought') {
-								reply.thought += data.text;
-							} else if (data.type === 'tool_call') {
-								reply.tool_calls.push({ name: data.name, args: data.args });
-							} else if (data.type === 'tool_result') {
-								const tc = reply.tool_calls.find(
-									(t) => t.name === data.name && t.result === undefined
-								);
-								if (tc) tc.result = data.result;
-								else reply.tool_calls.push({ name: data.name, result: data.result });
-								if (data.name === 'sync_letter_to_google_docs' && data.result) {
-									try {
-										const parsed =
-											typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-										if (parsed && parsed.url) reply.docUrl = parsed.url;
-									} catch {
-										// ignore malformed tool result
-									}
-								}
-							} else if (data.type === 'error') {
-								reply.text = `⚠ ${data.text}`;
-								reply.status = 'complete';
-							} else if (data.type === 'done') {
-								sessionId = data.session_id;
-								reply.status = 'complete';
-								doneReceived = true;
-							}
-						} catch {
-							// ignore malformed SSE chunk
-						}
-					}
-				}
-			}
-		} catch {
-			if (!doneReceived) {
-				reply.text = reply.text || '⚠ Connection interrupted. Please retry.';
-			}
-		} finally {
-			// Never leave the bubble stuck on the streaming skeleton.
-			if (!doneReceived) reply.status = 'complete';
-		}
+	function newChat() {
+		session.reset();
 	}
 </script>
 
 <div transition:fly class="flex h-full flex-col">
 	<div class="flex-1 min-h-0 overflow-y-auto p-4">
 		<div class="flex flex-col gap-3">
-			{#if resumeError}
+			{#if session.error}
 				<div
 					class="mx-auto mt-10 flex max-w-md flex-col items-center gap-3 rounded-md border border-red-500/40 bg-red-500/10 p-4 text-center"
 				>
-					<p class="text-sm text-red-500">⚠ {resumeError}</p>
+					<p class="text-sm text-red-500">⚠ {session.error}</p>
 					<div class="flex gap-2">
-						<Button type="button" variant="outline" onclick={() => resumeSession(loadedSession!)}>
-							Retry
-						</Button>
+						<Button type="button" variant="outline" onclick={() => session.retry()}>Retry</Button>
 						<Button type="button" variant="ghost" onclick={newChat}>New chat</Button>
 					</div>
 				</div>
-			{:else if resuming}
+			{:else if session.loading}
 				<div class="flex flex-col gap-3">
 					<Skeleton class="h-16 w-3/4" />
 					<Skeleton class="h-16 w-2/3" />
 				</div>
 			{:else}
-				{#each messages as msg, i (i)}
+				{#each session.messages as msg, i (i)}
 					<div transition:fly={{ y: 10, duration: 250 }}>
 						<Message align={msg.role === 'user' ? 'end' : 'start'}>
 							<div
@@ -276,18 +124,23 @@
 		</div>
 	</div>
 	<div class="border-t p-10">
-		<form onsubmit={send} class="flex gap-2">
+		<form onsubmit={handleSend} class="flex gap-2">
 			<Button
 				type="button"
 				variant="ghost"
 				onclick={newChat}
-				disabled={!messages.length}
+				disabled={!session.messages.length && !session.sessionId}
 				title="New chat"
 			>
 				<SquarePen />
 			</Button>
-			<Input bind:value={input} placeholder="Type a message..." class="flex-1 border-none" />
-			<Button type="submit" disabled={!input}>
+			<Input
+				bind:value={input}
+				placeholder={session.sending ? 'Waiting for response...' : 'Type a message...'}
+				class="flex-1 border-none"
+				disabled={session.sending}
+			/>
+			<Button type="submit" disabled={!input.trim() || session.sending}>
 				<SendHorizontal />
 			</Button>
 		</form>

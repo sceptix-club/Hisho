@@ -16,3 +16,9 @@ export interface ChatMessage {
 	status: 'streaming' | 'complete';
 	docUrl?: string;
 }
+
+export interface SessionSummary {
+	id: string;
+	title: string;
+	last_update: number;
+}

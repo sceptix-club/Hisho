@@ -1,35 +1,40 @@
 <script lang="ts">
-	import { auth } from '$lib/stores/auth.svelte';
-	import { api } from '$lib/api';
+	import type { SessionSummary } from '$lib/types/chat';
+	import { listSessions, deleteSession } from '$lib/api/sessions';
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { Trash2 } from '@lucide/svelte';
+	import { Trash2, SquarePen } from '@lucide/svelte';
 
-	type SessionSummary = { id: string; title: string; last_update: number };
 	let sessions = $state<SessionSummary[] | null>(null);
 
 	$effect(() => {
 		(async () => {
-			await auth.load();
-			const uid = auth.user?.id ?? 'default';
-			const res = await api(`/sessions?user_id=${uid}`);
-			sessions = res.ok ? await res.json() : [];
+			try {
+				sessions = await listSessions();
+			} catch {
+				sessions = [];
+			}
 		})();
 	});
 
 	async function removeSession(id: string) {
 		if (!confirm('Delete this conversation? This cannot be undone.')) return;
-		const res = await api(`/sessions/${id}`, { method: 'DELETE' });
-		if (res.ok) {
+		try {
+			await deleteSession(id);
 			sessions = (sessions ?? []).filter((s) => s.id !== id);
-		} else {
+		} catch {
 			alert('Failed to delete conversation.');
 		}
 	}
 </script>
 
 <div class="mx-auto w-full max-w-2xl p-6">
-	<h1 class="mb-4 text-lg font-semibold">Chat history</h1>
+	<div class="mb-4 flex items-center justify-between">
+		<h1 class="text-lg font-semibold">Chat history</h1>
+		<Button href="/chat" variant="outline" size="sm">
+			<SquarePen class="mr-1 size-4" /> New chat
+		</Button>
+	</div>
 	{#if sessions === null}
 		<div class="flex flex-col gap-2">
 			<Skeleton class="h-12 w-full" />
