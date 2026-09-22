@@ -5,6 +5,7 @@
 	import SendIcon from '@lucide/svelte/icons/send';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import Database from '@lucide/svelte/icons/database';
+	import IngestDocument from './ingest-document.svelte';
 	import NavMain from './nav-main.svelte';
 	import NavProjects from './nav-projects.svelte';
 	import NavSecondary from './nav-secondary.svelte';
@@ -43,11 +44,13 @@
 			},
 			{
 				title: 'DataStore',
-				url: '#',
+				url: '/datastore',
 				icon: Database,
 				items: [
-					{ title: 'Officials', url: '#' },
-					{ title: 'Letters', url: '#' }
+					{ title: 'Letter Nodes', url: '/datastore' },
+					{ title: 'Signatures', url: '/datastore' },
+					{ title: 'Letter Type Memory', url: '/datastore' },
+					{ title: 'Designations', url: '/datastore' }
 				]
 			},
 			{
@@ -109,6 +112,12 @@
 	</Sidebar.Header>
 	<Sidebar.Content>
 		<NavMain items={data.navMain} />
+		<Sidebar.Group class="group-data-[collapsible=icon]:hidden">
+			<Sidebar.GroupLabel>Actions</Sidebar.GroupLabel>
+			<Sidebar.Menu>
+				<IngestDocument />
+			</Sidebar.Menu>
+		</Sidebar.Group>
 		<NavProjects projects={data.projects} />
 		<NavSecondary items={data.navSecondary} class="mt-auto" />
 	</Sidebar.Content>

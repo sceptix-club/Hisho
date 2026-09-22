@@ -48,6 +48,25 @@ class GoogleDocsService:
                 )
         return "".join(parts)
 
+    @staticmethod
+    def extract_inline_image_urls(doc: dict) -> list[str]:
+        """Extract all inline image URLs (contentUri) from the document."""
+        urls = []
+        inline_objects = doc.get("inlineObjects", {})
+        for obj_id, obj_data in inline_objects.items():
+            try:
+                uri = (
+                    obj_data.get("inlineObjectProperties", {})
+                    .get("embeddedObject", {})
+                    .get("imageProperties", {})
+                    .get("contentUri")
+                )
+                if uri:
+                    urls.append(uri)
+            except Exception:
+                continue
+        return urls
+
 
     def create_document(self, title: str, content: str) -> dict:
         file = self._client.drive_service.files().create(

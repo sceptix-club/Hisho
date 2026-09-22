@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from db.session import AsyncSessionLocal
 from db.models import LetterMemory, LetterType, Official
-from services.embeddings import embed_text
+from services.pipeline.pipeline_components.embeddings import embed_text
 
 
 async def find_similar_letters(query: str) -> str:

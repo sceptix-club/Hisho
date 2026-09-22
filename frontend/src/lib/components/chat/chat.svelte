@@ -9,6 +9,7 @@
 	import { SendHorizontal, SquarePen } from '@lucide/svelte';
 	import { Skeleton } from '../ui/skeleton';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { api } from '$lib/api';
 	import { page } from '$app/state';
 
 	let input = $state('');
@@ -34,7 +35,7 @@
 	async function resumeSession(id: string) {
 		await auth.load();
 		const uid = auth.user?.id ?? 'default';
-		const res = await fetch(`http://localhost:8000/sessions/${id}?user_id=${uid}`);
+		const res = await api(`/sessions/${id}?user_id=${uid}`);
 		if (!res.ok) return;
 		const data = await res.json();
 		messages = data.messages;
@@ -64,7 +65,7 @@
 		});
 		const reply = messages[messages.length - 1];
 
-		const res = await fetch('http://localhost:8000/chat/stream', {
+		const res = await api('/chat/stream', {
 			method: 'POST',
 			body: JSON.stringify({
 				query,

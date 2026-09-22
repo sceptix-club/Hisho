@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth.svelte';
+	import { api } from '$lib/api';
 	import { Skeleton } from '$lib/components/ui/skeleton';
 
 	type SessionSummary = { id: string; title: string; last_update: number };
@@ -9,7 +10,7 @@
 		(async () => {
 			await auth.load();
 			const uid = auth.user?.id ?? 'default';
-			const res = await fetch(`http://localhost:8000/sessions?user_id=${uid}`);
+			const res = await api(`/sessions?user_id=${uid}`);
 			sessions = res.ok ? await res.json() : [];
 		})();
 	});

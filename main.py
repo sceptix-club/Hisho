@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from google.adk.runners import Runner
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.sessions import DatabaseSessionService
-from google.genai import types
+from google.genai import types      
 from config import settings
 from hisho_agents.agent import root_agent
 from api.routes.auth import router as auth_router
@@ -16,6 +16,8 @@ from api.routes.auth import ensure_admin_user
 from api.routes.letter_types import router as letter_types_router
 from api.routes.letters import router as letters_router
 from api.routes.officials import router as officials_router
+from api.routes.datastore.ingetion_route import router as ingestion_router
+from api.routes.datastore.data_routes import router as datastore_router
 from api.schemas.hisho import ChatRequest
 from db.session import AsyncSessionLocal
 import json
@@ -59,6 +61,8 @@ app.include_router(auth_router)
 app.include_router(letters_router)
 app.include_router(officials_router)
 app.include_router(letter_types_router)
+app.include_router(ingestion_router)
+app.include_router(datastore_router)
 
 
 @app.get("/")

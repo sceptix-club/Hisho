@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     google_access_token: str | None = Field(default=None, alias="GOOGLE_ACCESS_TOKEN")
     google_refresh_token: str | None = Field(default=None, alias="GOOGLE_REFRESH_TOKEN")
     jwt_auth_secret: str | None = Field(default=None, alias="JWT_AUTH_SECRET")
+    access_token_expire_minutes: int = Field(
+        default=15, alias="ACCESS_TOKEN_EXPIRE_MINUTES"
+    )
+    refresh_token_expire_days: int = Field(default=30, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    extraction_model: str = Field(default="qwen2.5:7b", alias="EXTRACTION_MODEL")
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
     letters_doc_id: str | None = Field(default=None, alias="LETTERS_DOC_ID")
     admin_email: str = Field(alias="ADMIN_EMAIL")

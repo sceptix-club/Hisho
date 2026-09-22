@@ -145,3 +145,45 @@ class User(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+class LetterTypeMemory(Base):
+    """LLM-extracted letter-type metadata from ingested Google Doc tabs."""
+
+    __tablename__ = "letter_type_memory"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    letter_type: Mapped[str] = mapped_column(String, nullable=False)
+    primary_domain: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    approval_chain: Mapped[dict] = mapped_column(JSON, nullable=False)
+    table_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
+    template_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+
+class Designation(Base):
+    """Unique designations extracted from letter approval chains."""
+
+    __tablename__ = "designations"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    incumbent: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+
+class Signature(Base):
+    """Signature images extracted from letters."""
+
+    __tablename__ = "signatures"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_doc_id: Mapped[str] = mapped_column(String, nullable=False)
+    image_url: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
