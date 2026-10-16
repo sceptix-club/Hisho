@@ -12,6 +12,7 @@ from google.genai import types
 from config import settings
 from hisho_agents.agent import root_agent
 from hisho_agents.ai_log_plugin import AiCallLogPlugin
+from hisho_agents.tool_arg_guard import ToolArgGuardPlugin
 from api.routes.auth import router as auth_router
 from api.routes.auth import ensure_admin_user
 from api.routes.auth import get_current_user
@@ -43,8 +44,9 @@ async def lifespan(app: FastAPI):
         auto_create_session=True,
         # Every model/tool call lands in ai_call_logs. ADK passes these plugins
         # down to the child Runner that robust_content_writer builds, so the
-        # writer/validator loop is captured too.
-        plugins=[AiCallLogPlugin()],
+        # writer/validator loop is captured too. ToolArgGuardPlugin repairs the
+        # model's malformed tool arguments before any tool sees them.
+        plugins=[AiCallLogPlugin(), ToolArgGuardPlugin()],
     )
     async with AsyncSessionLocal() as session:
         await ensure_admin_user(session)
