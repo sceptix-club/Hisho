@@ -89,42 +89,55 @@ async def list_letter_types() -> str:
         return "\n".join(lines).strip()
 
 
-async def get_approval_chain_from_db(letter_type_id: str) -> str:
-    """Fetch the approval chain for a letter type and resolve official names.
+async def resolve_approval_chain_text(session, letter_type_id: str) -> str:
+    """Resolve the approval chain for a letter type, using the given session.
 
     Args:
-        letter_type_id: The slug/id of the letter type (e.g. "event_permission").
+        session: An open AsyncSession to read through.
+        letter_type_id: The slug/id of the letter type (e.g. "event_permission_request").
 
     Returns:
-        A formatted string listing each step, the role, the action required,
-        and the current official holding that position.
+        A formatted string listing each step, the role, the action required, and
+        the current official's name, office and address. Empty when the letter
+        type is unknown or has no chain.
+    """
+    result = await session.execute(
+        select(LetterType).where(LetterType.id == letter_type_id)
+    )
+    letter_type = result.scalar_one_or_none()
+    if not letter_type or not letter_type.approval_chain:
+        return ""
+
+    lines = []
+    for step in sorted(letter_type.approval_chain, key=lambda s: s["step"]):
+        off_result = await session.execute(
+            select(Official).where(
+                Official.role == step["role"],
+                Official.deleted.is_(False),
+            )
+        )
+        official = off_result.scalar_one_or_none()
+        lines.append(f"{step['step']}. {step['role']} — {step['action']}")
+        if official:
+            lines.append(f"  Name: {official.name}")
+            lines.append(f"  Office/Designation: {official.organization}")
+            lines.append(f"  Address: {official.address}")
+        else:
+            lines.append("  Name: — (vacant) —")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+async def get_approval_chain_from_db(letter_type_id: str) -> str:
+    """Resolve the approval chain for a letter type, with a readable error.
+
+    Args:
+        letter_type_id: The slug/id of the letter type (e.g. "event_permission_request").
+
+    Returns:
+        The approval chain text, or a message explaining why there is none.
     """
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(LetterType).where(LetterType.id == letter_type_id)
-        )
-        letter_type = result.scalar_one_or_none()
-        if not letter_type:
-            return f"No letter type found with id '{letter_type_id}'."
-
-        chain = letter_type.approval_chain
-        if not chain:
-            return f"Letter type '{letter_type_id}' has no approval chain defined."
-
-        lines = [f"Approval Chain for: {letter_type.name}", ""]
-        for step in sorted(chain, key=lambda s: s["step"]):
-            off_result = await session.execute(
-                select(Official).where(
-                    Official.role == step["role"],
-                    Official.deleted.is_(False),
-                )
-            )
-            official = off_result.scalar_one_or_none()
-            name = official.name if official else "— (vacant) —"
-            lines.append(
-                f"Step {step['step']}: {step['role']} — {step['action']}"
-            )
-            lines.append(f"  Current: {name}")
-            lines.append("")
-
-        return "\n".join(lines).strip()
+        text = await resolve_approval_chain_text(session, letter_type_id)
+    return text or f"No approval chain found for letter type '{letter_type_id}'."

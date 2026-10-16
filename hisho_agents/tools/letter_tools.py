@@ -1,18 +1,38 @@
 import glob
 import os
 import re
+import json
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 
 from google.adk.tools import ToolContext
 from google.genai import types
 from sqlalchemy import select
 
-from db.models import Letter
+from db.models import Letter, User
 from db.session import AsyncSessionLocal
+from hisho_agents.tools.db import resolve_approval_chain_text
 
 logger = logging.getLogger(__name__)
+
+
+def _as_text(value: object) -> str:
+    """Normalise an LLM-supplied tool argument to text.
+
+    ADK advertises `str` parameters to the model but only coerces arguments
+    annotated as pydantic models (function_tool._preprocess_args), so a small
+    model can pass a JSON object where a string is expected and asyncpg rejects
+    the dict. Tool arguments are untrusted input; coerce at the boundary.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
 
 
 async def analyze_letters(directory: str) -> dict:
@@ -96,18 +116,38 @@ async def create_letter_brief(
         letter_type_id: Letter type id chosen via approval_router (e.g. "leave_letter").
         user_facts: All facts gathered from the conversation (purpose, names,
             dates, addresses, etc.).
-        approval_chain: Resolved approval chain text from approval_router.
+        approval_chain: Approval chain text; only used when the letter type has
+            no chain on record, because the database is authoritative.
         style_references: Style examples from find_similar_letters.
         tool_context: Injected automatically by ADK — provides user_id/session_id.
 
     Returns:
         The new letter id (brief id) to pass to robust_content_writer.
     """
+    title, description, letter_type_id, user_facts, approval_chain, style_references = (
+        _as_text(v)
+        for v in (
+            title,
+            description,
+            letter_type_id,
+            user_facts,
+            approval_chain,
+            style_references,
+        )
+    )
     letter_id = uuid.uuid4().hex
     reference_number = f"LT-{letter_id[:8].upper()}"
     user_id = _resolve_tool_user_id(tool_context)
     session_id = _resolve_tool_session_id(tool_context)
+
     async with AsyncSessionLocal() as session:
+        # Resolve the chain from the database instead of trusting the agent's
+        # text: the router skips get_approval_chain_from_db often enough that it
+        # invents plausible-looking officials, and those must never reach the
+        # letter. The agent's text is only a fallback for letter types with no
+        # chain on record.
+        resolved_chain = await resolve_approval_chain_text(session, letter_type_id)
+
         letter = Letter(
             id=letter_id,
             reference_number=reference_number,
@@ -117,7 +157,7 @@ async def create_letter_brief(
             approved=False,
             content=None,
             user_facts=user_facts,
-            approval_chain=approval_chain,
+            approval_chain=resolved_chain or approval_chain,
             style_references=style_references,
             status="pending",
             user_id=user_id,
@@ -127,6 +167,86 @@ async def create_letter_brief(
         await session.commit()
     logger.info("Created letter brief %s (%s) for user %s", letter_id, title, user_id)
     return f"Brief created with id={letter_id} reference={reference_number} status=pending"
+
+
+def build_writer_request(
+    *,
+    title: str,
+    description: str,
+    letter_type_id: str,
+    user_facts: str,
+    approval_chain: str,
+    style_references: str,
+    sender_name: str = "",
+    sender_organization: str = "",
+    today: datetime | None = None,
+) -> str:
+    """Build the plain-text brief the content writer drafts from.
+
+    Everything the letter must contain has to be in here. The writer is a
+    separate agent with no tools and no database access, so anything omitted
+    here cannot be recovered downstream — it invents a placeholder instead.
+    """
+    request_parts = [
+        f"Title: {title}",
+        f"Description: {description}",
+        f"Letter type: {letter_type_id}",
+        f"Today's date: {(today or datetime.now()).strftime('%d %B %Y')}",
+    ]
+
+    sender = " — ".join(
+        part.strip() for part in (sender_name, sender_organization) if part.strip()
+    )
+    if sender:
+        request_parts.append(f"Sender (who signs this letter): {sender}")
+
+    if user_facts:
+        request_parts.append(f"User facts: {user_facts}")
+    if approval_chain:
+        request_parts.append(
+            "Approval chain (reference data — copy the names, designations and "
+            "addresses exactly, in this order; do not print these labels or "
+            f"numbering in the letter): {approval_chain}"
+        )
+    if style_references:
+        # Truncate to avoid blowing context
+        request_parts.append(
+            f"Style references (structure/tone only, do not copy content): {style_references[:3000]}"
+        )
+    request_parts.append(
+        "Write the complete formal letter. Include Subject, Respected, and Sincerely sections. "
+        "Dates are day-first: 05/03/26 means 5 March 2026. Use every fact provided."
+    )
+    return "\n\n".join(request_parts)
+
+
+async def _load_brief(session, brief_id: str, tool_context: ToolContext | None):
+    """The brief to draft, or None when there is nothing to draft.
+
+    Falls back to the newest pending brief in this session: the letter agent
+    sometimes calls robust_content_writer in the same turn as
+    create_letter_brief, before it has the real id, and passes one it made up.
+    """
+    brief = (
+        await session.execute(select(Letter).where(Letter.id == brief_id))
+    ).scalar_one_or_none()
+    if brief is not None:
+        return brief
+
+    stmt = select(Letter).where(Letter.status == "pending")
+    session_id = _resolve_tool_session_id(tool_context)
+    if session_id:
+        stmt = stmt.where(Letter.session_id == session_id)
+    brief = (
+        await session.execute(stmt.order_by(Letter.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+    if brief is not None:
+        logger.warning(
+            "robust_content_writer: brief id %r not found; using latest pending brief %s",
+            brief_id,
+            brief.id,
+        )
+    return brief
 
 
 async def robust_content_writer(
@@ -161,8 +281,7 @@ async def robust_content_writer(
 
     # --- 2. Fetch brief from DB ---
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Letter).where(Letter.id == brief_id))
-        brief = result.scalar_one_or_none()
+        brief = await _load_brief(session, brief_id, tool_context)
         if brief is None:
             return f"Error: no letter brief found with id={brief_id}. Call create_letter_brief first."
         # Snapshot fields while session is open
@@ -172,26 +291,34 @@ async def robust_content_writer(
         user_facts = brief.user_facts or ""
         approval_chain = brief.approval_chain or ""
         style_references = brief.style_references or ""
+        sender_user_id = brief.user_id
+
+    # --- 2b. Resolve who is signing ---
+    # The writer has no database access, so the signer's identity has to be
+    # resolved here or it writes a "[Sender's Name]" placeholder.
+    sender_name = ""
+    sender_organization = ""
+    if sender_user_id:
+        async with AsyncSessionLocal() as session:
+            sender = (
+                await session.execute(select(User).where(User.id == sender_user_id))
+            ).scalar_one_or_none()
+            if sender:
+                sender_name = sender.full_name or ""
+                sender_organization = sender.organization or ""
 
     # --- 3. Build a plain natural-language request for the writer ---
     # The content_writer LoopAgent has no tools — it just writes from this text.
-    request_parts = [
-        f"Title: {title}",
-        f"Description: {description}",
-        f"Letter type: {letter_type_id}",
-    ]
-    if user_facts:
-        request_parts.append(f"User facts: {user_facts}")
-    if approval_chain:
-        request_parts.append(f"Approval chain (use for recipient and sign-off order): {approval_chain}")
-    if style_references:
-        # Truncate to avoid blowing context
-        request_parts.append(f"Style references (structure/tone only, do not copy content): {style_references[:3000]}")
-    request_parts.append(
-        "Write the complete formal letter. Include Subject, Respected, and Sincerely sections. "
-        "Dates are day-first: 05/03/26 means 5 March 2026. Use every fact provided."
+    request_text = build_writer_request(
+        title=title,
+        description=description,
+        letter_type_id=letter_type_id,
+        user_facts=user_facts,
+        approval_chain=approval_chain,
+        style_references=style_references,
+        sender_name=sender_name,
+        sender_organization=sender_organization,
     )
-    request_text = "\n\n".join(request_parts)
 
     # --- 4. Run the LoopAgent (content_writer + validator) as a child runner ---
     # Lazily import to avoid circular imports (agent.py imports from letter_tools)
@@ -266,9 +393,10 @@ async def robust_content_writer(
     content = types.Content(role="user", parts=[types.Part.from_text(text=request_text)])
     last_content = None
     letter_from_state = ""
+    real_letter = ""
 
     async def _run_writer():
-        nonlocal last_content, letter_from_state
+        nonlocal last_content, letter_from_state, real_letter
         async with Aclosing(
             runner.run_async(
                 user_id=session_obj.user_id,
@@ -282,6 +410,12 @@ async def robust_content_writer(
                 if event.actions and event.actions.state_delta:
                     if "letter" in event.actions.state_delta:
                         letter_from_state = event.actions.state_delta["letter"] or ""
+                        # On a revision the writer sometimes replies with prose
+                        # ("the letter has been generated") instead of the letter.
+                        # Remember the last output that is really a letter so that
+                        # prose cannot overwrite a good draft.
+                        if "Subject" in letter_from_state:
+                            real_letter = letter_from_state
                     if tool_context is not None:
                         try:
                             tool_context.state.update(event.actions.state_delta)
@@ -315,7 +449,7 @@ async def robust_content_writer(
     # --- 5. Extract letter text ---
     # Prefer the letter captured from state_delta; last_content may be the validator's
     # "Validation successful" message which is not the letter.
-    letter_text = letter_from_state.strip() if letter_from_state else ""
+    letter_text = (real_letter or letter_from_state).strip()
     if not letter_text and last_content and last_content.parts:
         candidate = "\n".join(
             p.text for p in last_content.parts if getattr(p, "text", None) and not getattr(p, "thought", False)

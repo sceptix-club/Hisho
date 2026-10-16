@@ -1,4 +1,6 @@
 from collections.abc import AsyncGenerator
+import re
+
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
@@ -12,10 +14,22 @@ class LetterValidationChecker(BaseAgent):
 
         letter = context.session.state.get("letter", "")
 
-        required_sections = ["Subject", "Respected", "Sincerely"]
-        missing = [s for s in required_sections if s not in letter]
+        problems = [
+            f"missing section: {s}"
+            for s in ("Subject", "Respected", "Sincerely")
+            if s not in letter
+        ]
 
-        if not missing:
+        # A placeholder means the writer had no data and invented a shell. Send
+        # it back for one retry rather than shipping a letter full of [Brackets].
+        placeholders = sorted(set(re.findall(r"\[[^\]]{1,60}\]", letter)))
+        if placeholders:
+            problems.append(
+                "unfilled placeholders — use the supplied details, or drop those "
+                f"lines: {', '.join(placeholders[:5])}"
+            )
+
+        if not problems:
             yield Event(
                 author=self.name,
                 content=Content(
@@ -24,7 +38,7 @@ class LetterValidationChecker(BaseAgent):
                 actions=EventActions(escalate=True),
             )
         else:
-            feedback = f"Missing sections: {', '.join(missing)}. Please rewrite the letter including these."
+            feedback = "The letter needs fixing: " + "; ".join(problems)
             context.session.state["feedback"] = feedback
 
             yield Event(

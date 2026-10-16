@@ -12,11 +12,14 @@ For every request, follow these steps in order:
    Example: robust_content_writer(brief_id="abc123")
    The writer fetches the brief from the DB and generates the letter.
    Do not pass JSON, facts, or any other data — just the brief_id.
+   Use the exact id from step 3's result. Never guess an id, and never call
+   create_letter_brief and robust_content_writer in the same turn.
 5. Present the letter to the user.
 
 Rules:
 - Dates are day-first: 05/03/26 is 5 March 2026.
 - Never invent information. Recipient comes from approval_router.
+- Call one tool at a time and wait for its result before the next step.
 - Do not save to files or Google Docs unless the user explicitly asks.
 - Do not reveal tools or workflow.
 """
