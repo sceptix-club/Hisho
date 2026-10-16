@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -205,3 +206,29 @@ class Signature(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
+
+
+class AiCallLog(Base):
+    """One row per LLM or tool event, for after-the-fact debugging.
+
+    Written by ``hisho_agents.ai_log_plugin``. A model call appears as a
+    ``model_request`` row followed by a ``model_response`` row sharing the same
+    ``invocation_id`` and ``agent``; a tool call likewise. ``payload`` holds the
+    full request/response so nothing has to be reconstructed from the session.
+    """
+
+    __tablename__ = "ai_call_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    invocation_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

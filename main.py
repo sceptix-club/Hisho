@@ -11,6 +11,7 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types      
 from config import settings
 from hisho_agents.agent import root_agent
+from hisho_agents.ai_log_plugin import AiCallLogPlugin
 from api.routes.auth import router as auth_router
 from api.routes.auth import ensure_admin_user
 from api.routes.auth import get_current_user
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
         agent=root_agent,
         session_service=app.state.db_session_service,
         auto_create_session=True,
+        # Every model/tool call lands in ai_call_logs. ADK passes these plugins
+        # down to the child Runner that robust_content_writer builds, so the
+        # writer/validator loop is captured too.
+        plugins=[AiCallLogPlugin()],
     )
     async with AsyncSessionLocal() as session:
         await ensure_admin_user(session)
