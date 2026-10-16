@@ -6,6 +6,12 @@ import { sveltekit } from '@sveltejs/kit/vite';
 
 export default defineConfig({
 	server: {
+		// FRONTEND_URL in the backend .env points at 5173. Without strictPort,
+		// vite silently falls back to 5174 when 5173 is busy, and the OAuth
+		// redirect then lands on a dead port: login succeeds but the browser
+		// shows a connection error. Fail loudly instead of drifting.
+		port: 5173,
+		strictPort: true,
 		proxy: {
 			'/auth': {
 				target: 'http://localhost:8000',

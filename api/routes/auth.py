@@ -172,12 +172,16 @@ async def google_callback(
     state: str,
     error: str | None = None,
 ):
+    # Every failure below is logged: uvicorn does not log handled HTTPExceptions,
+    # and in a browser redirect flow the response body is never seen.
     if error:
+        logger.warning("Google auth callback returned error=%s", error)
         raise HTTPException(status_code=400, detail=f"Google auth error: {error}")
 
     try:
         jwt.decode(state, settings.jwt_auth_secret, algorithms=["HS256"])
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as exc:
+        logger.warning("Google auth callback invalid state: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
@@ -193,6 +197,11 @@ async def google_callback(
         )
 
     if token_resp.status_code != 200:
+        logger.warning(
+            "Google token exchange failed status=%s body=%s",
+            token_resp.status_code,
+            token_resp.text,
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Token exchange failed: {token_resp.text}",
@@ -203,7 +212,19 @@ async def google_callback(
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
 
+    # Key names only — never log the values, they are live credentials.
+    logger.info(
+        "Google token response keys=%s id_token_present=%s refresh_token_present=%s",
+        sorted(tokens.keys()),
+        bool(id_token_str),
+        bool(refresh_token),
+    )
+
     if not id_token_str:
+        logger.warning(
+            "Google token response contained no id_token; keys=%s",
+            sorted(tokens.keys()),
+        )
         raise HTTPException(status_code=400, detail="No ID token received")
 
     try:
@@ -220,6 +241,7 @@ async def google_callback(
             issuer=["accounts.google.com", "https://accounts.google.com"],
         )
     except Exception as e:
+        logger.warning("Google ID token verification failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=400, detail=f"ID token verification failed: {e}"
         )
