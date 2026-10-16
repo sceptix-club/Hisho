@@ -15,6 +15,8 @@ from hisho_agents.sub_agents.workflow.approval_router import approval_router_age
 from hisho_agents.tools.docs import sync_letter_to_google_docs
 
 
+# Leaf workers: no transfer tool. ADK offers one by default, and the model uses
+# it to bounce back to root_agent mid-pipeline, looping until it returns nothing.
 interactive_letter_agent = Agent(
     name="interactive_letter_agent",
     model=config.worker_model,
@@ -27,6 +29,8 @@ interactive_letter_agent = Agent(
         FunctionTool(robust_content_writer),
         FunctionTool(sync_letter_to_google_docs),
     ],
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True,
     output_key="final_status",
 )
 
@@ -40,6 +44,8 @@ interactive_email_agent = Agent(
         AgentTool(robust_email_writer),
         FunctionTool(create_letter_brief),
     ],
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True,
     output_key="final_status",
 )
 
