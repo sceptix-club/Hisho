@@ -1,15 +1,20 @@
 from google.adk.agents import Agent, LoopAgent
+from google.adk.models import LiteLlm
 from hisho_agents.tools.validation_checkers import LetterValidationChecker
 from hisho_agents.prompts.content_writer import CONTENT_WRITER_INSTRUCTION
 from config import config, settings
-from google.adk.models import LiteLlm
 
-# Use a dedicated drafting model (qwen2.5:3b is fast and reliable for letter generation).
-# Falls back to the main worker model if the dedicated model is unavailable.
-try:
-    _draft_model = LiteLlm(model="ollama_chat/qwen2.5:3b", api_base=settings.ollama_base_url)
-except Exception:
-    _draft_model = config.worker_model
+# Drafting runs on a separate, GPU-resident model on purpose.
+# qwen3:4b (config.worker_model) is the better orchestrator, but it does not fit
+# this card's 4 GB VRAM: it runs ~15-25% on CPU at ~38 tok/s and emits thinking
+# tokens we don't need for bulk generation, so it cannot meet the writer's 90s
+# budget in letter_tools.robust_content_writer. qwen2.5:3b fits entirely on GPU
+# at ~73 tok/s and always meets it.
+# shortcut: swapping models reloads from disk (~4-6s per draft); revisit if the
+# card grows or fine-tune a tool-capable model that fits in VRAM.
+_draft_model = LiteLlm(
+    model="ollama_chat/qwen2.5:3b", api_base=settings.ollama_base_url
+)
 
 content_writer = Agent(
     model=_draft_model,
